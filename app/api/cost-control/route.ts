@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { calcolaCostoPersona } from "@/lib/payroll";
+import { calculateRecipeCost } from "@/lib/recipe-cost";
+import { calcRicavoNettoRiga } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -26,9 +28,10 @@ export async function GET(request: NextRequest) {
     coperti += s.coverCount;
     for (const item of s.items) {
       const isBev = item.dish?.category?.name === "Bevande";
-      const c = item.dish ? item.dish.recipes.reduce((sum, r) => sum + r.ingredient.unitPrice * r.quantity, 0) * item.quantity : 0;
-      if (isBev) { bevRev += item.totalPrice; bevCost += c; }
-      else { foodRev += item.totalPrice; foodCost += c; }
+      const c = item.dish ? (calculateRecipeCost(item.dish).costPerPortion || 0) * item.quantity : 0;
+      const ricavoNetto = calcRicavoNettoRiga(item.totalPrice, item.vatRate);
+      if (isBev) { bevRev += ricavoNetto; bevCost += c; }
+      else { foodRev += ricavoNetto; foodCost += c; }
     }
   }
 

@@ -10,11 +10,19 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const { name, price, description, categoryId } = await request.json();
-  if (!name || !price) return NextResponse.json({ error: "Nome e prezzo richiesti" }, { status: 400 });
+  const { name, price, description, categoryId, vatRate = 10, yieldPortions = 1, preparation } = await request.json();
+  const parsedPrice = Number(price);
+  const parsedVatRate = Number(vatRate);
+  const parsedYield = Number(yieldPortions);
+  if (!name?.trim() || !categoryId || !Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+    return NextResponse.json({ error: "Nome, categoria e prezzo valido sono obbligatori" }, { status: 400 });
+  }
+  if (![4, 5, 10, 22].includes(parsedVatRate) || !Number.isFinite(parsedYield) || parsedYield <= 0) {
+    return NextResponse.json({ error: "Controlla aliquota IVA e porzioni prodotte" }, { status: 400 });
+  }
 
   const dish = await prisma.dish.create({
-    data: { name, price: parseFloat(price), description, categoryId },
+    data: { name: name.trim(), price: parsedPrice, vatRate: parsedVatRate, yieldPortions: parsedYield, preparation, description, categoryId },
     include: { category: true, recipes: { include: { ingredient: true } } },
   });
   return NextResponse.json(dish);

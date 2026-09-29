@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { calcVariazione } from "@/lib/metrics";
+import { calcRicavoNettoRiga, calcVariazione } from "@/lib/metrics";
+import { calculateRecipeCost } from "@/lib/recipe-cost";
 
 export const dynamic = "force-dynamic";
 
@@ -92,11 +93,13 @@ function summarizeSales(sales: any[], range: DateRange) {
   const trendByDate = new Map<string, { date: string; ricavi: number; coperti: number; transazioni: number }>();
 
   for (const sale of sales) {
-    totalRev += sale.total;
+    const itemNetRevenue = sale.items.reduce((sum: number, item: any) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
+    const saleNetRevenue = sale.items.length > 0 ? itemNetRevenue : Math.max(0, sale.total - sale.taxAmount);
+    totalRev += saleNetRevenue;
     coperti += sale.coverCount;
     const key = dateKey(new Date(sale.date));
     const daily = trendByDate.get(key) || { date: key, ricavi: 0, coperti: 0, transazioni: 0 };
-    daily.ricavi += sale.total;
+    daily.ricavi += saleNetRevenue;
     daily.coperti += sale.coverCount;
     daily.transazioni += 1;
     trendByDate.set(key, daily);
@@ -111,13 +114,15 @@ function summarizeSales(sales: any[], range: DateRange) {
         continue;
       }
       const isBev = item.dish?.category?.name?.trim().toLocaleLowerCase("it-IT") === "bevande";
-      if (item.dish.recipes.length === 0) missingRecipeItems += 1;
-      const recipeCost = item.dish.recipes.reduce((sum: number, recipe: any) => sum + recipe.ingredient.unitPrice * recipe.quantity, 0) * item.quantity;
+      const costing = calculateRecipeCost(item.dish);
+      if (!costing.complete) missingRecipeItems += 1;
+      const recipeCost = (costing.costPerPortion || 0) * item.quantity;
+      const revenue = calcRicavoNettoRiga(item.totalPrice, item.vatRate);
       if (isBev) {
-        bevRev += item.totalPrice;
+        bevRev += revenue;
         bevCost += recipeCost;
       } else {
-        foodRev += item.totalPrice;
+        foodRev += revenue;
         foodCost += recipeCost;
       }
     }

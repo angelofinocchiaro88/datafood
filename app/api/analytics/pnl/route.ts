@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { calculateRecipeCost } from "@/lib/recipe-cost";
+import { calcRicavoNettoRiga } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -43,21 +45,25 @@ export async function GET() {
     coperti += s.coverCount;
     for (const item of s.items) {
       const isBev = item.dish?.category?.name === "Bevande";
-      const costo = item.dish ? item.dish.recipes.reduce((sum, r) => sum + r.ingredient.unitPrice * r.quantity, 0) * item.quantity : 0;
+      const recipeCost = item.dish ? calculateRecipeCost(item.dish) : null;
+      const costo = (recipeCost?.costPerPortion || 0) * item.quantity;
+      const ricavoNetto = calcRicavoNettoRiga(item.totalPrice, item.vatRate);
       
       if (isBev) {
-        bev_sala += item.totalPrice;
+        bev_sala += ricavoNetto;
         bevCost += costo;
-        for (const r of item.dish?.recipes || []) {
+        for (const [index, r] of (item.dish?.recipes || []).entries()) {
           const cat = classifyBev(r.ingredient.name);
-          bevDetail[cat] = (bevDetail[cat] || 0) + r.ingredient.unitPrice * r.quantity * item.quantity;
+          const lineCost = recipeCost?.complete ? recipeCost.lines[index]?.lineCost || 0 : 0;
+          bevDetail[cat] = (bevDetail[cat] || 0) + lineCost / (recipeCost?.yieldPortions || 1) * item.quantity;
         }
       } else {
-        food_sala += item.totalPrice;
+        food_sala += ricavoNetto;
         foodCost += costo;
-        for (const r of item.dish?.recipes || []) {
+        for (const [index, r] of (item.dish?.recipes || []).entries()) {
           const cat = classifyIngredient(r.ingredient.name);
-          foodDetail[cat] = (foodDetail[cat] || 0) + r.ingredient.unitPrice * r.quantity * item.quantity;
+          const lineCost = recipeCost?.complete ? recipeCost.lines[index]?.lineCost || 0 : 0;
+          foodDetail[cat] = (foodDetail[cat] || 0) + lineCost / (recipeCost?.yieldPortions || 1) * item.quantity;
         }
       }
     }

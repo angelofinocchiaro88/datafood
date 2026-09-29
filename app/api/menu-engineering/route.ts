@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { calculateRecipeCost, getFoodCostPct, getGrossTargetPrice } from "@/lib/recipe-cost";
+import { calcRicavoNettoRiga } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -70,8 +72,6 @@ export async function GET(request: NextRequest) {
 
   const requestedCategory = request.nextUrl.searchParams.get("categoryId") || "all";
   const targetFoodCost = Number(request.nextUrl.searchParams.get("targetFoodCost") || 30);
-  const scenarioVatInput = Number(request.nextUrl.searchParams.get("scenarioVat") || 10);
-  const scenarioVat = [4, 10, 22].includes(scenarioVatInput) ? scenarioVatInput : 10;
   const safeTargetFoodCost = Number.isFinite(targetFoodCost) && targetFoodCost >= 10 && targetFoodCost <= 80 ? targetFoodCost : 30;
   const categoryWhere = requestedCategory === "all" ? {} : { categoryId: requestedCategory };
 
@@ -91,13 +91,14 @@ export async function GET(request: NextRequest) {
   ]);
 
   const dishIds = new Set(dishes.map(dish => dish.id));
+  const dishVatRates = new Map(dishes.map(dish => [dish.id, dish.vatRate]));
   const salesByDish = new Map<string, { units: number; netRevenue: number; vatWeighted: number }>();
   for (const line of saleItems) {
     if (!line.dishId || !dishIds.has(line.dishId) || line.quantity <= 0) continue;
     const current = salesByDish.get(line.dishId) || { units: 0, netRevenue: 0, vatWeighted: 0 };
-    const vatRate = Number.isFinite(line.vatRate) && line.vatRate >= 0 ? line.vatRate : scenarioVat;
+    const vatRate = Number.isFinite(line.vatRate) && line.vatRate >= 0 ? line.vatRate : dishVatRates.get(line.dishId) || 10;
     current.units += line.quantity;
-    current.netRevenue += line.totalPrice / (1 + vatRate / 100);
+    current.netRevenue += calcRicavoNettoRiga(line.totalPrice, vatRate);
     current.vatWeighted += line.quantity * vatRate;
     salesByDish.set(line.dishId, current);
   }
@@ -115,18 +116,17 @@ export async function GET(request: NextRequest) {
   const categories = Array.from(new Map(dishes.map(dish => [dish.categoryId, { id: dish.categoryId, name: dish.category.name }])).values());
   const menu = dishes.map(dish => {
     const sales = salesByDish.get(dish.id) || { units: 0, netRevenue: 0, vatWeighted: 0 };
-    const recipeCost = dish.recipes.reduce((sum, recipe) => sum + recipe.ingredient.unitPrice * recipe.quantity, 0);
-    const missingCostIngredients = dish.recipes.filter(recipe => !Number.isFinite(recipe.ingredient.unitPrice) || recipe.ingredient.unitPrice <= 0).length;
-    const recipeComplete = dish.recipes.length > 0 && missingCostIngredients === 0;
-    const vatRate = sales.units > 0 ? sales.vatWeighted / sales.units : scenarioVat;
+    const costing = calculateRecipeCost(dish);
+    const recipeCost = costing.costPerPortion;
+    const missingCostIngredients = costing.lines.filter(line => !line.complete).length;
+    const recipeComplete = costing.complete;
+    const vatRate = sales.units > 0 ? sales.vatWeighted / sales.units : dish.vatRate;
     const actualNetPrice = sales.units > 0 ? sales.netRevenue / sales.units : null;
     const planningNetPrice = dish.price / (1 + vatRate / 100);
     const referenceNetPrice = actualNetPrice ?? planningNetPrice;
-    const unitMargin = recipeComplete ? referenceNetPrice - recipeCost : null;
-    const foodCostPct = recipeComplete && referenceNetPrice > 0 ? recipeCost / referenceNetPrice * 100 : null;
-    const minimumGrossPriceAtTargetFoodCost = recipeComplete && safeTargetFoodCost > 0
-      ? recipeCost / (safeTargetFoodCost / 100) * (1 + vatRate / 100)
-      : null;
+    const unitMargin = recipeComplete && recipeCost != null ? referenceNetPrice - recipeCost : null;
+    const foodCostPct = recipeComplete ? getFoodCostPct(recipeCost, referenceNetPrice * (1 + vatRate / 100), vatRate) : null;
+    const minimumGrossPriceAtTargetFoodCost = recipeComplete ? getGrossTargetPrice(recipeCost, safeTargetFoodCost, vatRate) : null;
 
     return {
       id: dish.id,
@@ -136,6 +136,8 @@ export async function GET(request: NextRequest) {
       listPriceGross: dish.price,
       vatRate,
       recipeCost,
+      recipeCostBatch: costing.totalBatchCost,
+      yieldPortions: costing.yieldPortions,
       recipeCount: dish.recipes.length,
       missingCostIngredients,
       recipeComplete,
@@ -199,12 +201,12 @@ export async function GET(request: NextRequest) {
   const totalNetRevenue = menu.reduce((sum, dish) => sum + dish.netRevenue, 0);
   const totalContribution = eligibleSold.reduce((sum, dish) => sum + (dish.totalContribution || 0), 0);
   const netRevenueWithDish = menu.reduce((sum, dish) => sum + dish.netRevenue, 0);
-  const totalTheoreticalCost = eligibleSold.reduce((sum, dish) => sum + dish.recipeCost * dish.salesQty, 0);
+  const totalTheoreticalCost = eligibleSold.reduce((sum, dish) => sum + (dish.recipeCost || 0) * dish.salesQty, 0);
 
   return NextResponse.json({
     period: { key: range.period, label: range.label, from: dateKey(range.start), to: dateKey(addDays(range.end, -1)) },
     categoryId: requestedCategory,
-    scenario: { targetFoodCostPct: safeTargetFoodCost, fallbackVatRate: scenarioVat },
+    scenario: { targetFoodCostPct: safeTargetFoodCost },
     categories,
     thresholds: { averageContribution, averageUnitsPerMenuItem, popularityThreshold, popularityFactor: 0.7 },
     summary: {

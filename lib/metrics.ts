@@ -28,6 +28,12 @@ export function formatDateIt(d: Date | string): string {
   return date.toLocaleDateString("it-IT");
 }
 
+// SaleItem.totalPrice è registrato IVA inclusa; i KPI economici usano i ricavi netti.
+export function calcRicavoNettoRiga(totalPrice: number, vatRate: number): number {
+  if (!Number.isFinite(totalPrice) || !Number.isFinite(vatRate) || vatRate < 0) return 0;
+  return totalPrice / (1 + vatRate / 100);
+}
+
 // KPI economici
 export function calcRicaviTotali(pnl: PnlData): number {
   return pnl.ricavi.total;

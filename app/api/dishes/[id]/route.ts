@@ -3,10 +3,16 @@ import { prisma } from "@/lib/db";
 
 // PUT: modifica piatto
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
-  const { name, price, description, categoryId } = await request.json();
+  const { name, price, description, categoryId, vatRate, yieldPortions, preparation } = await request.json();
+  const parsedPrice = price == null ? undefined : Number(price);
+  const parsedVatRate = vatRate == null ? undefined : Number(vatRate);
+  const parsedYield = yieldPortions == null ? undefined : Number(yieldPortions);
+  if (parsedPrice != null && (!Number.isFinite(parsedPrice) || parsedPrice <= 0)) return NextResponse.json({ error: "Il prezzo deve essere maggiore di zero" }, { status: 400 });
+  if (parsedVatRate != null && ![4, 5, 10, 22].includes(parsedVatRate)) return NextResponse.json({ error: "Aliquota IVA non valida" }, { status: 400 });
+  if (parsedYield != null && (!Number.isFinite(parsedYield) || parsedYield <= 0)) return NextResponse.json({ error: "La resa deve essere maggiore di zero" }, { status: 400 });
   const dish = await prisma.dish.update({
     where: { id: params.id },
-    data: { name, price: price != null ? parseFloat(price) : undefined, description, categoryId },
+    data: { name: name?.trim(), price: parsedPrice, vatRate: parsedVatRate, yieldPortions: parsedYield, preparation, description, categoryId },
     include: { category: true, recipes: { include: { ingredient: true } } },
   });
   return NextResponse.json(dish);

@@ -59,6 +59,9 @@ model Dish {
   name        String
   description String?
   price       Float
+  vatRate     Float      @default(10)
+  yieldPortions Float    @default(1)
+  preparation String?
   imageUrl    String?
   clientId    String   @default("default")
   client      Client?  @relation(fields: [clientId], references: [id])
@@ -89,6 +92,8 @@ model Ingredient {
 model Recipe {
   id           String     @id @default(cuid())
   quantity     Float
+  unit         String?
+  wastePct     Float      @default(0)
   dishId       String
   dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
   ingredientId String

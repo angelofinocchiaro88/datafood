@@ -111,10 +111,10 @@ export async function POST(request: NextRequest) {
 
           const existing = await prisma.recipe.findFirst({ where: { dishId: dish.id, ingredientId: ingredient.id } });
           if (existing) {
-            await prisma.recipe.update({ where: { id: existing.id }, data: { quantity: qty } });
+            await prisma.recipe.update({ where: { id: existing.id }, data: { quantity: qty, unit: unit || null } });
             results.updated++;
           } else {
-            await prisma.recipe.create({ data: { dishId: dish.id, ingredientId: ingredient.id, quantity: qty } });
+            await prisma.recipe.create({ data: { dishId: dish.id, ingredientId: ingredient.id, quantity: qty, unit: unit || null } });
             results.created++;
           }
         } catch { results.errors++; }

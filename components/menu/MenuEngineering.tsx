@@ -35,7 +35,7 @@ type MenuDish = {
 type MenuAnalysis = {
   period: { key: string; label: string; from: string; to: string };
   categoryId: string;
-  scenario: { targetFoodCostPct: number; fallbackVatRate: number };
+  scenario: { targetFoodCostPct: number };
   categories: { id: string; name: string }[];
   thresholds: { averageContribution: number | null; averageUnitsPerMenuItem: number; popularityThreshold: number; popularityFactor: number };
   summary: { menuItems: number; soldItems: number; classifiedItems: number; unclassifiedItems: number; units: number; netRevenue: number; theoreticalCost: number; contribution: number; unlinkedSalesLines: number; costCoveragePct: number | null };
@@ -87,7 +87,6 @@ export function MenuEngineering() {
   const [to, setTo] = useState(today);
   const [categoryId, setCategoryId] = useState("all");
   const [targetFoodCost, setTargetFoodCost] = useState(30);
-  const [scenarioVat, setScenarioVat] = useState(10);
   const [search, setSearch] = useState("");
   const [quadrantFilter, setQuadrantFilter] = useState("all");
   const [data, setData] = useState<MenuAnalysis | null>(null);
@@ -101,7 +100,7 @@ export function MenuEngineering() {
       return;
     }
 
-    const params = new URLSearchParams({ period, categoryId, targetFoodCost: String(targetFoodCost), scenarioVat: String(scenarioVat) });
+    const params = new URLSearchParams({ period, categoryId, targetFoodCost: String(targetFoodCost) });
     if (period === "custom") { params.set("from", from); params.set("to", to); }
     const controller = new AbortController();
     setLoading(true);
@@ -115,7 +114,7 @@ export function MenuEngineering() {
       .catch(reason => { if (reason.name !== "AbortError") setError(reason.message || "Errore caricamento"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [period, from, to, categoryId, targetFoodCost, scenarioVat]);
+  }, [period, from, to, categoryId, targetFoodCost]);
 
   const searchedMenu = useMemo(() => {
     if (!data) return [];
@@ -163,7 +162,7 @@ export function MenuEngineering() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><SlidersHorizontal className="h-4 w-4 text-emerald-600" /> Ambito dell’analisi</div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-xs text-slate-500">Periodo
             <select value={period} onChange={event => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">
               {PERIODS.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
@@ -184,11 +183,6 @@ export function MenuEngineering() {
               <input type="number" min="10" max="80" step="1" value={targetFoodCost} onChange={event => setTargetFoodCost(Math.min(80, Math.max(10, Number(event.target.value) || 30)))} className="w-full text-sm text-slate-800 outline-none" />
               <span className="text-sm text-slate-400">%</span>
             </div>
-          </label>
-          <label className="text-xs text-slate-500">IVA scenario per piatti senza vendite
-            <select value={scenarioVat} onChange={event => setScenarioVat(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">
-              {[4, 10, 22].map(rate => <option key={rate} value={rate}>{rate}%</option>)}
-            </select>
           </label>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
@@ -315,7 +309,7 @@ export function MenuEngineering() {
                 const quadrant = QUADRANTS.find(item => item.key === dish.quadrant);
                 return (
                   <tr key={dish.id} className="align-top hover:bg-slate-50">
-                    <td className="px-3 py-3"><p className="font-semibold text-slate-900">{dish.name}</p><p className="text-xs text-slate-500">{dish.category} · {dish.analysisPriceSource === "consuntivo" ? "prezzo netto realizzato" : `simulazione listino, IVA ${scenarioVat}%`}</p></td>
+                    <td className="px-3 py-3"><p className="font-semibold text-slate-900">{dish.name}</p><p className="text-xs text-slate-500">{dish.category} · {dish.analysisPriceSource === "consuntivo" ? "prezzo netto realizzato" : `simulazione listino, IVA ${dish.vatRate}%`}</p></td>
                     <td className="px-3 py-3"><span className={`inline-flex whitespace-nowrap rounded-full px-2 py-1 text-xs font-medium ${quadrant?.key === "star" ? "bg-emerald-100 text-emerald-800" : quadrant?.key === "puzzle" ? "bg-sky-100 text-sky-800" : quadrant?.key === "plow-horse" ? "bg-amber-100 text-amber-800" : quadrant?.key === "dog" ? "bg-rose-100 text-rose-800" : "bg-slate-100 text-slate-600"}`}>{quadrantName(dish.quadrant)}</span></td>
                     <td className="px-3 py-3 text-right tabular-nums">{dish.salesQty.toLocaleString("it-IT", { maximumFractionDigits: 1 })}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{pct(dish.salesMixPct)}</td>
@@ -334,7 +328,7 @@ export function MenuEngineering() {
         </div>
         <div className="flex items-start gap-2 border-t border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500">
           <ClipboardList className="mt-0.5 h-4 w-4 shrink-0" />
-          Il prezzo minimo è il pavimento lordo per non superare il food cost obiettivo, calcolato dal costo ricetta e dall’IVA osservata; senza vendite usa l’IVA scenario selezionata. Non è un prezzo consigliato né modifica il listino.
+          Il prezzo minimo è il pavimento lordo per non superare il food cost obiettivo, calcolato dal costo ricetta e dall’IVA effettiva delle vendite; senza vendite usa l’aliquota IVA salvata nella scheda piatto. Non è un prezzo consigliato né modifica il listino.
         </div>
       </section>
     </div>
