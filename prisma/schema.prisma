@@ -1,0 +1,587 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  sdiCode     String?
+  pecAddress  String?
+  vatNumber   String?
+  address     String?
+  phone       String?
+  email       String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  dishes      Dish[]
+  categories  Category[]
+  ingredients Ingredient[]
+  suppliers   Supplier[]
+  sales       Sale[]
+  invoices    Invoice[]
+  chatSessions ChatSession[]
+  posConfigs  PosConfig[]
+  sdiConfigs  SdiConfig[]
+  fiscalYears FiscalYear[]
+  budgetTargets BudgetTarget[]
+  assets        Asset[]
+  fattureEmesse FatturaEmessa[]
+  accounts      Account[]
+  cashFlowCategories CashFlowCategory[]
+  cashTransactions CashTransaction[]
+  cashFlowForecasts CashFlowForecast[]
+  forecastRules ForecastRule[]
+  paymentSchedules PaymentSchedule[]
+  alerts        Alert[]
+  dipendenti    Dipendente[]
+  contratti     Contratto[]
+  bustePaga     BustaPaga[]
+  emailConfigs  EmailConfig[]
+  emailLogs     EmailLog[]
+}
+
+model Category {
+  id       String @id @default(cuid())
+  name     String
+  clientId String @default("default")
+  client   Client? @relation(fields: [clientId], references: [id])
+  dishes   Dish[]
+}
+
+model Dish {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  price       Float
+  imageUrl    String?
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  recipes     Recipe[]
+  saleItems   SaleItem[]
+}
+
+model Ingredient {
+  id           String        @id @default(cuid())
+  name         String
+  unit         String        @default("pz")
+  categoria    String        @default("Altro")
+  minStock     Float         @default(0)
+  currentStock Float         @default(0)
+  unitPrice    Float         @default(0)
+  clientId     String        @default("default")
+  client       Client?       @relation(fields: [clientId], references: [id])
+  recipes      Recipe[]
+  orderItems   OrderItem[]
+  movements    Movement[]
+  invoiceItems InvoiceItem[]
+}
+
+model Recipe {
+  id           String     @id @default(cuid())
+  quantity     Float
+  dishId       String
+  dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  @@unique([dishId, ingredientId])
+}
+
+model Supplier {
+  id       String     @id @default(cuid())
+  name     String
+  vat      String?
+  email    String?
+  phone    String?
+  address  String?
+  notes    String?
+  clientId String     @default("default")
+  client   Client?    @relation(fields: [clientId], references: [id])
+  orders   Order[]
+  invoices Invoice[]
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  date       DateTime    @default(now())
+  status     String      @default("DRAFT")
+  total      Float       @default(0)
+  supplierId String
+  supplier   Supplier    @relation(fields: [supplierId], references: [id])
+  items      OrderItem[]
+}
+
+model OrderItem {
+  id           String     @id @default(cuid())
+  quantity     Float
+  unitPrice    Float
+  received     Float      @default(0)
+  orderId      String
+  order        Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+}
+
+model Movement {
+  id           String     @id @default(cuid())
+  type         String
+  quantity     Float
+  date         DateTime   @default(now())
+  reference    String?
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+}
+
+model Sale {
+  id              String        @id @default(cuid())
+  date            DateTime      @default(now())
+  total           Float
+  taxAmount       Float         @default(0)
+  paymentMethod   String        @default("CASH")
+  coverCount      Int           @default(1)
+  posId           String?
+  operatorName    String?
+  tableNumber     String?
+  orderNumbers    String?
+  externalId      String?
+  type            String        @default("MANUAL")
+  source          String?
+  clientId        String        @default("default")
+  client          Client?       @relation(fields: [clientId], references: [id])
+  quantity        Int           @default(1)
+  metadataJson    String?
+  items           SaleItem[]
+  dailySummary    DailySummary? @relation(fields: [dailySummaryId], references: [id])
+  dailySummaryId  String?
+  @@unique([externalId, date])
+}
+
+model SaleItem {
+  id          String  @id @default(cuid())
+  quantity    Float
+  unitPrice   Float
+  totalPrice  Float
+  vatRate     Float   @default(10)
+  dishId      String?
+  dish        Dish?   @relation(fields: [dishId], references: [id])
+  saleId      String
+  sale        Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productName String
+}
+
+model DailySummary {
+  id               String   @id @default(cuid())
+  date             DateTime @unique
+  totalRevenue     Float    @default(0)
+  totalTax         Float    @default(0)
+  totalCash        Float    @default(0)
+  totalCard        Float    @default(0)
+  coverCount       Int      @default(0)
+  transactionCount Int      @default(0)
+  averageTicket    Float    @default(0)
+  sales            Sale[]
+}
+
+model Invoice {
+  id            String      @id @default(cuid())
+  invoiceNumber String
+  invoiceDate   DateTime
+  dueDate       DateTime?
+  senderVat     String
+  senderName    String
+  recipientVat  String
+  recipientName String
+  totalAmount   Float
+  taxAmount     Float
+  xmlContent    String?
+  status        String      @default("PENDING")
+  supplierId    String?
+  supplier      Supplier?   @relation(fields: [supplierId], references: [id])
+  macroArea     String?
+  categoria     String?
+  sottocategoria String?
+  voceDettaglio String?
+  contoGestionale String?
+  clientId      String      @default("default")
+  client        Client?     @relation(fields: [clientId], references: [id])
+  items         InvoiceItem[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  sdiConfigId   String?
+}
+
+model InvoiceItem {
+  id           String    @id @default(cuid())
+  description  String
+  quantity     Float
+  unitPrice    Float
+  totalPrice   Float
+  vatRate      Float     @default(10)
+  invoiceId    String
+  invoice      Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  ingredientId String?
+  ingredient   Ingredient? @relation(fields: [ingredientId], references: [id])
+}
+
+model PosConfig {
+  id          String    @id @default(cuid())
+  name        String
+  type        String
+  apiEndpoint String?
+  apiKey      String?
+  isActive    Boolean   @default(true)
+clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+// ─── CONFIGURAZIONE EMAIL ───
+model EmailConfig {
+  id            String   @id @default(cuid())
+  host          String
+  port          Int      @default(587)
+  secure        Boolean  @default(false)
+  user          String
+  password      String
+  fromName      String   @default("DATAFOOD")
+  fromEmail     String
+  replyTo       String?
+  enabled       Boolean  @default(false)
+  testDate      DateTime?
+  clientId      String   @default("default")
+  client        Client?  @relation(fields: [clientId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─── REGISTRO EMAIL INVIATE ───
+model EmailLog {
+  id          String   @id @default(cuid())
+  to          String
+  subject     String
+  template    String   @default("generico")
+  body        String?
+  status      String   @default("inviata") // inviata, errore, dry_run
+  error       String?
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model SdiConfig {
+  id            String    @id @default(cuid())
+  recipientCode String
+  pecAddress    String
+  pushUrl       String?
+  active        Boolean   @default(true)
+  clientId      String   @default("default")
+  client        Client?  @relation(fields: [clientId], references: [id])
+  lastFetch     DateTime?
+}
+
+model ChatSession {
+  id        String        @id @default(cuid())
+  userId    String        @default("default")
+  title     String        @default("Nuova conversazione")
+  clientId  String        @default("default")
+  client    Client?       @relation(fields: [clientId], references: [id])
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+}
+
+model ChatMessage {
+  id         String      @id @default(cuid())
+  sessionId  String
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       String
+  content    String
+  actionType String?
+  actionData String?
+  createdAt  DateTime    @default(now())
+}
+
+model UserMemory {
+  id        String   @id @default(cuid())
+  userId    String   @default("default")
+  category  String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([userId, category, key])
+}
+
+model FiscalYear {
+  id           String          @id @default(cuid())
+  year         Int             @unique
+  startDate    DateTime
+  endDate      DateTime
+  isActive     Boolean         @default(true)
+  totalRevenue Float           @default(0)
+  totalCosts   Float           @default(0)
+  totalMargin  Float           @default(0)
+  clientId     String          @default("default")
+  client       Client?         @relation(fields: [clientId], references: [id])
+  YearlySummary YearlySummary[]
+}
+
+model YearlySummary {
+  id               String     @id @default(cuid())
+  fiscalYearId     String
+  fiscalYear       FiscalYear @relation(fields: [fiscalYearId], references: [id])
+  month            Int
+  year             Int
+  revenue          Float      @default(0)
+  foodCost         Float      @default(0)
+  laborCost        Float      @default(0)
+  otherCosts       Float      @default(0)
+  margin           Float      @default(0)
+  transactionCount Int        @default(0)
+  coverCount       Int        @default(0)
+  @@unique([fiscalYearId, month])
+}
+
+model BudgetTarget {
+  id              String @id @default(cuid())
+  year            Int
+  month           Int
+  revenueTarget   Float  @default(0)
+  foodCostPct     Float  @default(32)
+  laborCostPct    Float  @default(28)
+  otherCostPct    Float  @default(5)
+  coverTarget     Int    @default(0)
+  avgTicketTarget Float  @default(0)
+  clientId        String @default("default")
+  client          Client? @relation(fields: [clientId], references: [id])
+  @@unique([year, month, clientId])
+}
+
+model Asset {
+  id                 String   @id @default(cuid())
+  code               String   @default("")
+  description        String
+  category           String
+  coefficient        Float    @default(10)
+  costoStorico       Float    @default(0)
+  dataAcquisto       DateTime @default(now())
+  dataEntrataFunzione DateTime @default(now())
+  fornitore          String?
+  numFattura         String?
+  fondoAmmIniziale   Float    @default(0)
+  quotaAnnua         Float    @default(0)
+  quotaMensile       Float    @default(0)
+  primoAnnoRidotto   Boolean  @default(true)
+  percentualePrimoAnno Float  @default(50)
+  stato              String   @default("attivo")
+  centroCosto        String?
+  contoEconomico     String?
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+// ─── MODULO PERSONALE ───
+
+model Dipendente {
+  id          String   @id @default(cuid())
+  codice      String
+  nome        String
+  cognome     String
+  dataNascita DateTime?
+  codiceFiscale String?
+  qualifica   String   @default("cuoco")
+  dataAssunzione DateTime @default(now())
+  tipoContratto String? @default("tempo_indeterminato")
+  stato       String   @default("attivo")
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  contratti   Contratto[]
+  buste       BustaPaga[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Contratto {
+  id          String   @id @default(cuid())
+  dipendenteId String
+  dipendente  Dipendente @relation(fields: [dipendenteId], references: [id], onDelete: Cascade)
+  tipo        String   @default("tempo_indeterminato")
+  ccnl        String   @default("pubblici_esercizi")
+  livello     String   @default("4")
+  oreSettimanali Int   @default(40)
+  pagaOraria  Float    @default(0)
+  retribuzioneLordaMensile Float @default(0)
+  mensilita    Int      @default(13)
+  dataInizio   DateTime @default(now())
+  dataFine     DateTime?
+  clientId     String   @default("default")
+  client       Client?  @relation(fields: [clientId], references: [id])
+  createdAt    DateTime @default(now())
+}
+
+model BustaPaga {
+  id          String   @id @default(cuid())
+  dipendenteId String
+  dipendente  Dipendente @relation(fields: [dipendenteId], references: [id], onDelete: Cascade)
+  mese        Int
+  anno        Int
+  retribuzioneLorda Float @default(0)
+  straordinari     Float @default(0)
+  indennita        Float @default(0)
+  contributiDip  Float @default(0)
+  irpef          Float @default(0)
+  contributiAzienda Float @default(0)
+  inailAzienda Float @default(0)
+  tfrMaturato   Float @default(0)
+  rateiTredicesima Float @default(0)
+  rateiQuattordicesima Float @default(0)
+  rateiFerie   Float @default(0)
+  rateiPermessi Float @default(0)
+  altriRatei    Float @default(0)
+  nettoDipendente Float @default(0)
+  costoAzienda    Float @default(0)
+  differitoTotale Float @default(0)
+  clientId     String   @default("default")
+  client       Client?  @relation(fields: [clientId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model FatturaEmessa {
+  id           String   @id @default(cuid())
+  numero       String
+  data         DateTime @default(now())
+  cliente      String
+  partitaIva   String?
+  importo      Float    @default(0)
+  iva          Float    @default(0)
+  tipologia    String   @default("catering")
+  descrizione  String?
+  stato        String   @default("EMESSA")
+  clientId     String   @default("default")
+  client       Client?  @relation(fields: [clientId], references: [id])
+  createdAt    DateTime @default(now())
+}
+
+// ─── CASH FLOW MODULE ───
+
+model Account {
+  id          String   @id @default(cuid())
+  name        String
+  iban        String?
+  currency    String   @default("EUR")
+  type        String   @default("current") // current, cash, card
+  status      String   @default("active")
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  transactions CashTransaction[]
+  forecasts   CashFlowForecast[]
+}
+
+model CashFlowCategory {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // inflow, outflow
+  parentId    String?
+  orderIndex  Int      @default(0)
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  transactions CashTransaction[]
+  paymentSchedules PaymentSchedule[]
+}
+
+model CashTransaction {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  date        DateTime
+  amount      Float
+  currency    String   @default("EUR")
+  description String?
+  counterparty String?
+  categoryId  String?
+  category    CashFlowCategory? @relation(fields: [categoryId], references: [id])
+  source      String   @default("manual") // bank_upload, api, manual
+  isReconciled Boolean @default(false)
+  externalId  String?
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CashFlowForecast {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  weekStartDate DateTime
+  projectedInflow  Float @default(0)
+  projectedOutflow Float @default(0)
+  projectedNet     Float @default(0)
+  projectedEndingBalance Float @default(0)
+  status      String   @default("draft") // draft, final
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ForecastRule {
+  id          String   @id @default(cuid())
+  ruleType    String   // seasonality, fixed_cost, variable_cost, one_off
+  description String?
+  parameters  String?  // JSON
+  categoryId  String?
+  active      Boolean  @default(true)
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model PaymentSchedule {
+  id          String   @id @default(cuid())
+  type        String   // payment, income
+  categoryId  String?
+  category    CashFlowCategory? @relation(fields: [categoryId], references: [id])
+  counterparty String?
+  description String
+  amount      Float    @default(0)
+  currency    String   @default("EUR")
+  dueDate     DateTime
+  recurrence  String   @default("none") // none, weekly, monthly, quarterly, yearly
+  nextDueDate DateTime
+  probability Int      @default(100) // % probabilità (per forecast)
+  linkedTransactionId String?
+  notes       String?
+  status      String   @default("open") // open, paid, cancelled
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Alert {
+  id          String   @id @default(cuid())
+  alertType   String   // low_balance, negative_week, upcoming_large_payment, unusual_transaction
+  accountId   String?
+  message     String
+  threshold   String?  // JSON
+  isResolved  Boolean  @default(false)
+  resolvedAt  DateTime?
+  notes       String?
+  clientId    String   @default("default")
+  client      Client?  @relation(fields: [clientId], references: [id])
+  createdAt   DateTime @default(now())
+}

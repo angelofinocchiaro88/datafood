@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RistoGest - Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #FAFAF9; }
+        .font-heading { font-family: 'Playfair Display', serif; }
+    </style>
+</head>
+<body class="min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <header class="flex items-center gap-4 mb-8 p-4 bg-white rounded-xl shadow">
+            <div class="w-12 h-12 bg-[#1E3A5F] rounded-lg flex items-center justify-center">
+                <span class="text-white font-bold text-xl">R</span>
+            </div>
+            <div>
+                <h1 class="text-2xl font-heading font-bold text-gray-900">RistoGest</h1>
+                <p class="text-sm text-gray-500">Controllo di Gestione Ristorante</p>
+            </div>
+        </header>
+
+        <h2 class="text-2xl font-heading font-bold text-gray-900 mb-2">Benvenuto!</h2>
+        <p class="text-gray-500 mb-6">Questa è una pagina di test per verificare che Tailwind funzioni.</p>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow">
+                <span class="text-xs text-gray-500">Oggi</span>
+                <p class="text-2xl font-bold text-gray-900">€2.840</p>
+                <span class="text-xs text-emerald-600">+12.5%</span>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow">
+                <span class="text-xs text-gray-500">Questa Settimana</span>
+                <p class="text-2xl font-bold text-gray-900">€14.250</p>
+                <span class="text-xs text-emerald-600">+8.2%</span>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow">
+                <span class="text-xs text-gray-500">Food Cost</span>
+                <p class="text-2xl font-bold text-gray-900">32.5%</p>
+                <span class="text-xs text-red-600">-2.1%</span>
+            </div>
+            <div class="bg-amber-50 p-4 rounded-xl border border-amber-300 shadow">
+                <span class="text-xs text-gray-500">Alert Scorte</span>
+                <p class="text-2xl font-bold text-amber-700">4</p>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow">
+            <h3 class="font-heading font-semibold text-lg mb-4">Se vedi questa pagina formattata correttamente, vuol dire che Tailwind funziona!</h3>
+            <p class="text-gray-600">Le card sopra dovrebbero essere affiancate, non una sotto l'altra.</p>
+            <p class="text-gray-600 mt-2">I colori dovrebbero essere corretti e il testo formattato.</p>
+        </div>
+    </div>
+</body>
+</html>
