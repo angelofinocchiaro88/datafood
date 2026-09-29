@@ -28,6 +28,7 @@ export function OrdersChart({ orders }: OrdersChartProps) {
   const statusMap: Record<string, { label: string; count: number; valore: number }> = {
     DRAFT: { label: "Bozza", count: 0, valore: 0 },
     SENT: { label: "Inviato", count: 0, valore: 0 },
+    PARTIAL: { label: "Parziale", count: 0, valore: 0 },
     RECEIVED: { label: "Ricevuto", count: 0, valore: 0 },
   };
   for (const o of orders) {

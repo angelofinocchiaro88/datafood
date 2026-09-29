@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import Link from "next/link";
 import { ShoppingCart, CheckCircle2, Clock, Package, AlertTriangle, Plus, Trash2, Truck, ArrowRight, Search, X, Save, Mail } from "lucide-react";
 import { OrdersChart } from "@/components/ordini/OrdersChart";
@@ -11,6 +11,8 @@ export default function OrdiniPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
+  const [receiveOrderId, setReceiveOrderId] = useState<string | null>(null);
+  const [receivedQuantities, setReceivedQuantities] = useState<Record<string, string>>({});
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ supplierId: "", items: [] as { ingredientId: string; quantity: number }[] });
   const [selSupplier, setSelSupplier] = useState("");
@@ -34,7 +36,7 @@ export default function OrdiniPage() {
   };
 
   const scorteBasse = ingredients.filter(i => i.currentStock <= i.minStock && i.minStock > 0);
-  const attivi = orders.filter(o => o.status === "SENT" || o.status === "DRAFT");
+  const attivi = orders.filter(o => o.status === "SENT" || o.status === "PARTIAL" || o.status === "DRAFT");
   const ricevuti = orders.filter(o => o.status === "RECEIVED");
   const valoreTotale = orders.reduce((s, o) => s + o.total, 0);
 
@@ -44,9 +46,33 @@ export default function OrdiniPage() {
   };
 
   const updateStatus = async (id: string, status: string) => {
-    await fetch("/api/orders", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, status }) });
-    setMsg(status === "RECEIVED" ? "✅ Ordine ricevuto: magazzino aggiornato + fattura creata" : "📤 Ordine inviato");
-    load();
+    const response = await fetch("/api/orders", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, status }) });
+    const result = await response.json();
+    if (!response.ok) { setMsg(`⚠️ ${result.error || "Operazione non riuscita"}`); return; }
+    setMsg(status === "RECEIVED" ? `✅ ${result.message}` : "📤 Ordine inviato");
+    setReceiveOrderId(null);
+    await load();
+  };
+
+  const openReceipt = (order: any) => {
+    setReceiveOrderId(order.id);
+    setReceivedQuantities(Object.fromEntries((order.items || []).map((item: any) => [item.id, "0"])));
+  };
+
+  const registerPartialReceipt = async (order: any) => {
+    const receivedItems = Object.entries(receivedQuantities)
+      .map(([orderItemId, quantity]) => ({ orderItemId, quantity: Number(quantity) }))
+      .filter(item => item.quantity > 0);
+    const response = await fetch("/api/orders", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: order.id, action: "RECEIVE_PARTIAL", receivedItems }),
+    });
+    const result = await response.json();
+    if (!response.ok) { setMsg(`⚠️ ${result.error || "Ricezione non riuscita"}`); return; }
+    setMsg(`✅ ${result.message}`);
+    setReceiveOrderId(null);
+    await load();
   };
 
   const createOrder = async () => {
@@ -194,10 +220,11 @@ export default function OrdiniPage() {
               <thead className="bg-slate-50"><tr><th className="text-left px-3 py-2">N°</th><th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">Fornitore</th><th className="text-right px-3 py-2">Totale</th><th className="text-center px-3 py-2">Stato</th><th className="text-right px-3 py-2">Items</th><th className="text-center px-3 py-2">Azioni</th></tr></thead>
               <tbody className="divide-y">
                 {orders.map(o => {
-                  const statusStyle = o.status === "RECEIVED" ? "bg-emerald-100 text-emerald-700" : o.status === "SENT" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600";
-                  const statusLabel = o.status === "RECEIVED" ? "Ricevuto" : o.status === "SENT" ? "Inviato" : "Bozza";
+                  const statusStyle = o.status === "RECEIVED" ? "bg-emerald-100 text-emerald-700" : o.status === "PARTIAL" ? "bg-amber-100 text-amber-700" : o.status === "SENT" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600";
+                  const statusLabel = o.status === "RECEIVED" ? "Ricevuto" : o.status === "PARTIAL" ? "Parziale" : o.status === "SENT" ? "Inviato" : "Bozza";
                   return (
-                    <tr key={o.id} className="hover:bg-slate-50">
+                    <Fragment key={o.id}>
+                    <tr className="hover:bg-slate-50">
                       <td className="px-3 py-2 font-medium">#{o.id.slice(-4)}</td>
                       <td className="px-3 py-2 text-slate-500">{new Date(o.date).toLocaleDateString("it-IT")}</td>
                       <td className="px-3 py-2">{o.supplier?.name || "-"}</td>
@@ -208,11 +235,41 @@ export default function OrdiniPage() {
                         <div className="flex justify-center gap-1">
                           <button onClick={() => sendOrderEmail(o)} className="text-xs px-2 py-1 bg-indigo-100 text-indigo-700 rounded" title="Invia via email"><Mail className="w-3 h-3 inline mr-0.5" />Email</button>
                           {o.status === "DRAFT" && <button onClick={() => updateStatus(o.id, "SENT")} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded">Invia</button>}
-                          {o.status === "SENT" && <button onClick={() => updateStatus(o.id, "RECEIVED")} className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded">Ricevuto</button>}
+                          {(o.status === "SENT" || o.status === "PARTIAL") && <button onClick={() => openReceipt(o)} className="text-xs px-2 py-1 bg-amber-100 text-amber-800 rounded">Registra arrivo</button>}
+                          {(o.status === "SENT" || o.status === "PARTIAL") && <button onClick={() => updateStatus(o.id, "RECEIVED")} className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded">Completa</button>}
                           {o.status === "RECEIVED" && <span className="text-xs text-emerald-600">✓ completo</span>}
                         </div>
                       </td>
                     </tr>
+                    {receiveOrderId === o.id && (
+                      <tr>
+                        <td colSpan={7} className="bg-amber-50 px-4 py-4">
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <div>
+                              <h4 className="text-sm font-semibold text-slate-800">Registra quantità arrivate · #{o.id.slice(-4)}</h4>
+                              <p className="text-xs text-slate-500">Inserisci solo le quantità effettivamente consegnate. Le rimanenti restano aperte.</p>
+                            </div>
+                            <button onClick={() => setReceiveOrderId(null)} className="text-slate-500 hover:text-slate-800"><X className="w-4 h-4" /></button>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {o.items.filter((item: any) => item.received < item.quantity).map((item: any) => {
+                              const remaining = item.quantity - item.received;
+                              return (
+                                <label key={item.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-200 px-3 py-2 text-sm">
+                                  <span>{item.ingredient?.name || "Ingrediente"}<span className="block text-xs text-slate-500">Residuo: {remaining} {item.ingredient?.unit || ""}</span></span>
+                                  <input type="number" min="0" max={remaining} step="0.001" value={receivedQuantities[item.id] ?? "0"} onChange={e => setReceivedQuantities({ ...receivedQuantities, [item.id]: e.target.value })} className="w-28 text-right border rounded px-2 py-1" aria-label={`Quantità ricevuta per ${item.ingredient?.name || "ingrediente"}`} />
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            <button onClick={() => registerPartialReceipt(o)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Salva ricezione</button>
+                            <button onClick={() => setReceiveOrderId(null)} className="px-3 py-1.5 border border-slate-300 text-slate-600 rounded-lg text-xs">Annulla</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
