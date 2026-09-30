@@ -36,7 +36,6 @@ const SECTIONS = [
       { icon: FileText, label: "Fatture Emesse", href: "/fatture-emesse" },
       { icon: TrendingUp, label: "Vendite", href: "/vendite" },
       { icon: DollarSign, label: "Revenue Management", href: "/revenue-management" },
-      { icon: DollarSign, label: "Revenue Management", href: "/revenue-management" },
     ],
   },
   {
