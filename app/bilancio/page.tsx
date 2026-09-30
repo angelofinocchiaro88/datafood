@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { FileText, TrendingUp, TrendingDown, Building2, Wallet, Package, Truck, ChevronRight, Info, Scale } from "lucide-react";
+import { FileText, Building2, Wallet, Package, Truck, ChevronDown, ChevronRight, Info, Scale } from "lucide-react";
 
-type VistaCE = "valore_aggiunto" | "margine_contribuzione" | "sintetica";
 const PERIODS = [
   { key: "mese", label: "Mese" },
   { key: "trimestre", label: "Trimestre" },
@@ -16,8 +15,8 @@ export default function BilancioPage() {
   const [management, setManagement] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"ce" | "sp">("ce");
-  const [vista, setVista] = useState<VistaCE>("valore_aggiunto");
   const [period, setPeriod] = useState("anno");
+  const [showInvoiceDetails, setShowInvoiceDetails] = useState(false);
 
   useEffect(() => { void load(period); }, [period]);
 
@@ -42,17 +41,20 @@ export default function BilancioPage() {
   if (loading || !data || !management) return <div className="p-8 text-center text-slate-400">Caricamento bilancio...</div>;
 
   const source = management.pnl;
-  const cogs = source.theoreticalFoodCost + source.theoreticalBeverageCost;
   const occupancy = management.costAreas.filter((area: any) => area.name.toLocaleUpperCase("it-IT").includes("OCCUPAZIONE")).reduce((sum: number, area: any) => sum + area.amount, 0);
+  const services = Math.max(0, source.operatingInvoices - occupancy);
   const ce = {
     ricaviVendite: source.posRevenue,
     ricaviCatering: source.issuedRevenue,
     ricaviTotali: source.revenue,
-    costiMateriePrime: cogs,
-    valoreAggiunto: source.revenue - cogs,
-    costiServizi: Math.max(0, source.operatingInvoices - occupancy),
+    costiFood: source.theoreticalFoodCost,
+    costiBeverage: source.theoreticalBeverageCost,
+    costiMateriePrime: source.theoreticalFoodCost + source.theoreticalBeverageCost,
+    margineLordoPos: source.grossMargin,
+    costiServizi: services,
     costiGodimento: occupancy,
-    costiPersonale: source.payroll + source.externalPersonnelInvoices,
+    costiPersonale: source.payroll,
+    costiPersonaleEsterno: source.externalPersonnelInvoices,
     mol: source.EBITDAEstimate,
     ammortamenti: source.depreciationEstimate,
     ebit: source.operatingResultEstimate,
@@ -101,79 +103,42 @@ export default function BilancioPage() {
           </button>
         </div>
 
-        {tab === "ce" && (
-          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-            {([
-              { k: "valore_aggiunto", l: "Valore Aggiunto" },
-              { k: "margine_contribuzione", l: "Margine Contribuzione" },
-              { k: "sintetica", l: "Sintetica" },
-            ] as const).map(v => (
-              <button key={v.k} onClick={() => setVista(v.k)} className={`px-3 py-1.5 rounded-md text-xs font-medium ${vista === v.k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{v.l}</button>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* CONTO ECONOMICO */}
       {tab === "ce" && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-4 py-3 bg-slate-50 border-b flex items-center justify-between">
-            <h3 className="font-semibold text-slate-800">Conto Economico · {vista === "valore_aggiunto" ? "a Valore Aggiunto" : vista === "margine_contribuzione" ? "a Margine di Contribuzione" : "Sintetico"}</h3>
-            <span className="text-xs text-slate-400">importi in € · % su ricavi</span>
+            <div><h3 className="font-semibold text-slate-800">Conto Economico gestionale · {management.period.label}</h3><p className="text-xs text-slate-500">Voci e sotto-voci derivate da vendite, fatture classificate, personale e cespiti.</p></div>
+            <span className="text-xs text-slate-400">€ · % sul totale ricavi</span>
           </div>
 
           <div className="p-4 space-y-1">
-            {vista === "valore_aggiunto" && (
-              <>
-                <CERow label="Ricavi delle vendite POS" value={ce.ricaviVendite} pct={share(ce.ricaviVendite)} bold positive />
-                <CERow label="Ricavi catering/eventi" value={ce.ricaviCatering} pct={share(ce.ricaviCatering)} positive indent />
-                <CERow label="RICAVI TOTALI" value={ce.ricaviTotali} pct={100} bold total />
+            <CERow label="Ricavi POS netti" value={ce.ricaviVendite} pct={share(ce.ricaviVendite)} positive />
+            <CERow label="Ricavi catering / eventi" value={ce.ricaviCatering} pct={share(ce.ricaviCatering)} positive indent />
+            <CERow label="RICAVI TOTALI NETTI" value={ce.ricaviTotali} pct={100} bold total />
+            <div className="my-2 border-t border-slate-200" />
+            <CERow label="Food Cost teorico · vendite POS" value={-ce.costiFood} pct={share(-ce.costiFood)} negative />
+            <CERow label="Beverage Cost teorico · vendite POS" value={-ce.costiBeverage} pct={share(-ce.costiBeverage)} negative />
+            <CERow label="MARGINE LORDO TEORICO POS" value={ce.margineLordoPos} pct={share(ce.margineLordoPos)} bold total />
+            <p className="px-2 py-1 text-[10px] text-slate-400">Le fatture di eventi sono ricavi separati: finché non sono collegate a ricette, i relativi costi non entrano nel margine Food Cost.</p>
+            <div className="my-2 border-t border-slate-200" />
+            <CERow label="Personale da buste / stima contratti" value={-ce.costiPersonale} pct={share(-ce.costiPersonale)} negative />
+            <CERow label="Personale esterno da fatture" value={-ce.costiPersonaleEsterno} pct={share(-ce.costiPersonaleEsterno)} negative />
+            <CERow label="Costi operativi da conti classificati" value={-ce.costiServizi} pct={share(-ce.costiServizi)} negative />
+            <CERow label="Occupazione e struttura da fatture" value={-ce.costiGodimento} pct={share(-ce.costiGodimento)} negative />
+            <CERow label="MOL / EBITDA gestionale preliminare" value={ce.mol} pct={share(ce.mol)} bold total />
+            <CERow label="Ammortamenti" value={-ce.ammortamenti} pct={share(-ce.ammortamenti)} negative />
+            <CERow label="EBIT gestionale preliminare" value={ce.ebit} pct={share(ce.ebit)} bold total />
+            <CERow label="Oneri finanziari classificati" value={-ce.oneriFinanziari} pct={share(-ce.oneriFinanziari)} negative />
+            <CERow label="Risultato ante imposte" value={ce.utileAnteImposte} pct={share(ce.utileAnteImposte)} bold />
+            <CERow label="Imposte" value={null} pct={null} negative />
+            <CERow label="UTILE NETTO" value={null} pct={null} bold total />
+          </div>
 
-                <CERow label="Costi materie prime (food + beverage)" value={-ce.costiMateriePrime} pct={share(-ce.costiMateriePrime)} negative />
-                <div className="border-t border-slate-100 my-1" />
-                <CERow label="VALORE AGGIUNTO TEORICO" value={ce.valoreAggiunto} pct={share(ce.valoreAggiunto)} bold total />
-
-                <CERow label="Altri costi operativi da fatture" value={-ce.costiServizi} pct={share(-ce.costiServizi)} negative />
-                <CERow label="Costi di occupazione e struttura" value={-ce.costiGodimento} pct={share(-ce.costiGodimento)} negative />
-                <CERow label="Costo del personale" value={-ce.costiPersonale} pct={share(-ce.costiPersonale)} negative />
-                <div className="border-t border-slate-100 my-1" />
-                <CERow label="MOL / EBITDA gestionale preliminare" value={ce.mol} pct={share(ce.mol)} bold total />
-
-                <CERow label="Ammortamenti" value={-ce.ammortamenti} pct={share(-ce.ammortamenti)} negative />
-                <CERow label="EBIT (Risultato Operativo)" value={ce.ebit} pct={share(ce.ebit)} bold total />
-                <CERow label="Oneri finanziari da fatture" value={-ce.oneriFinanziari} pct={share(-ce.oneriFinanziari)} negative />
-                <CERow label="Risultato ante imposte gestionale" value={ce.utileAnteImposte} pct={share(ce.utileAnteImposte)} bold />
-                <CERow label="Imposte" value={null} pct={null} negative />
-                <CERow label="UTILE NETTO" value={null} pct={null} bold total />
-              </>
-            )}
-
-            {vista === "margine_contribuzione" && (
-              <>
-                <CERow label="Ricavi netti" value={ce.ricaviTotali} pct={100} bold positive />
-                <CERow label="Costi variabili teorici (materie prime)" value={-ce.costiMateriePrime} pct={share(-ce.costiMateriePrime)} negative />
-                <div className="border-t border-slate-100 my-1" />
-                <CERow label="MARGINE DI CONTRIBUZIONE TEORICO" value={ce.ricaviTotali - ce.costiMateriePrime} pct={share(ce.ricaviTotali - ce.costiMateriePrime)} bold total />
-                <CERow label="Personale + altri costi classificati" value={-(ce.costiPersonale + ce.costiServizi + ce.costiGodimento)} pct={share(-(ce.costiPersonale + ce.costiServizi + ce.costiGodimento))} negative />
-                <div className="border-t border-slate-100 my-1" />
-                <CERow label="MOL / EBITDA gestionale preliminare" value={ce.mol} pct={share(ce.mol)} bold total />
-                <CERow label="Ammortamenti + oneri finanziari" value={-(ce.ammortamenti + ce.oneriFinanziari)} pct={share(-(ce.ammortamenti + ce.oneriFinanziari))} negative />
-                <CERow label="UTILE NETTO" value={null} pct={null} bold total />
-              </>
-            )}
-
-            {vista === "sintetica" && (
-              <>
-                <CERow label="Ricavi netti" value={ce.ricaviTotali} pct={100} bold positive />
-                <CERow label="Costi materie prime teorici" value={-ce.costiMateriePrime} pct={share(-ce.costiMateriePrime)} negative />
-                <CERow label="Costo personale" value={-ce.costiPersonale} pct={share(-ce.costiPersonale)} negative />
-                <CERow label="Altri costi operativi classificati" value={-(ce.costiServizi + ce.costiGodimento)} pct={share(-(ce.costiServizi + ce.costiGodimento))} negative />
-                <CERow label="Ammortamenti e oneri" value={-(ce.ammortamenti + ce.oneriFinanziari)} pct={share(-(ce.ammortamenti + ce.oneriFinanziari))} negative />
-                <div className="border-t border-slate-100 my-1" />
-                <CERow label="EBITDA gestionale preliminare" value={ce.mol} pct={share(ce.mol)} bold total />
-                <CERow label="UTILE NETTO" value={null} pct={null} bold total />
-              </>
-            )}
+          <div className="border-t border-slate-200">
+            <button onClick={() => setShowInvoiceDetails(value => !value)} className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"><span>Dettaglio voci fattura · {management.invoiceDetails.length} righe documento</span>{showInvoiceDetails ? <ChevronDown className="h-4 w-4"/> : <ChevronRight className="h-4 w-4"/>}</button>
+            {showInvoiceDetails && (management.invoiceDetails.length > 0 ? <div className="overflow-x-auto border-t border-slate-100"><table className="w-full min-w-[1100px] text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2 text-left">Data / doc.</th><th className="px-3 py-2 text-left">Fornitore</th><th className="px-3 py-2 text-left">Conto gestionale / area</th><th className="px-3 py-2 text-left">Categoria / voce</th><th className="px-3 py-2 text-left">Riga documento</th><th className="px-3 py-2 text-right">Quantità</th><th className="px-3 py-2 text-right">Prezzo unitario</th><th className="px-3 py-2 text-right">Importo riga</th></tr></thead><tbody className="divide-y divide-slate-100">{management.invoiceDetails.map((item: any) => <tr key={item.id}><td className="px-3 py-2 text-slate-600">{new Date(item.date).toLocaleDateString("it-IT")}<span className="block text-[10px] text-slate-400">{item.invoiceNumber}</span></td><td className="px-3 py-2">{item.supplier}</td><td className="px-3 py-2">{item.contoGestionale || item.macroArea || <span className="text-amber-700">Non classificato</span>}</td><td className="px-3 py-2 text-slate-600">{[item.category, item.subcategory, item.detail].filter(Boolean).join(" · ") || "—"}</td><td className="px-3 py-2">{item.description}{item.ingredient && <span className="ml-1 text-slate-400">· {item.ingredient}</span>}</td><td className="px-3 py-2 text-right">{item.quantity == null ? "—" : item.quantity}</td><td className="px-3 py-2 text-right">{item.unitPrice == null ? "—" : fm(item.unitPrice)}</td><td className="px-3 py-2 text-right font-medium">{fm(item.lineTotal)}</td></tr>)}</tbody></table></div> : <div className="p-6 text-center text-sm text-slate-400">Nessuna fattura approvata nel periodo. Importa e classifica i documenti per popolare le voci.</div>)}
           </div>
 
           <div className="px-4 py-3 bg-slate-50 border-t text-xs text-slate-400 flex items-center gap-1">
@@ -210,14 +175,23 @@ export default function BilancioPage() {
               <h3 className="font-semibold text-rose-800">PASSIVO E PATRIMONIO NETTO</h3>
             </div>
             <div className="p-4 space-y-1">
-               <SPRow label="Fatture fornitori approvate (da riconciliare)" value={sp.debitiFornitori} />
-               <SPRow label="Fondo TFR stimato" value={sp.fondoTRF} />
-               <SPRow label="Debiti tributari stimati" value={sp.debitiTributari} />
-              <SPRow label="Totale debiti" value={sp.totaleDebiti} bold />
+              <SPRow label="Debiti verso fornitori riconciliati" value={sp.debitiFornitori} />
+              <SPRow label="Fondo TFR (saldo iniziale non registrato)" value={sp.fondoTRF} />
+              <SPRow label="Debiti tributari (non integrati)" value={sp.debitiTributari} />
+              <SPRow label="Totale debiti riconciliati" value={sp.totaleDebiti} bold />
               <div className="border-t border-slate-100 my-1" />
               <SPRow label="Patrimonio netto" value={sp.patrimonioNetto} bold positive={sp.patrimonioNetto > 0} />
               <div className="border-t-2 border-slate-200 my-2" />
               <SPRow label="TOTALE PASSIVO E PN" value={sp.totalePassivo} bold total />
+            </div>
+          </div>
+
+          <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
+            <h4 className="text-sm font-semibold text-slate-800">Importi da riconciliare</h4>
+            <p className="mt-1 text-xs text-slate-500">Sono saldi operativi censiti, non passività certe finché non vengono abbinati a pagamenti e contabilità.</p>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Fatture fornitori approvate</p><p className="mt-1 text-lg font-bold text-slate-900">{fm(sp.fattureFornitoriDaRiconciliare)}</p><p className="text-[10px] text-slate-400">{data.dataQuality.approvedSupplierInvoicesCount} documenti · stato pagamento non riconciliato</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Crediti da fatture emesse</p><p className="mt-1 text-lg font-bold text-slate-900">{fm(sp.creditiClienti)}</p><p className="text-[10px] text-slate-400">{data.dataQuality.issuedInvoicesToReconcileCount} fatture EMESSE · incassi non abbinati</p></div>
             </div>
           </div>
 
@@ -265,11 +239,12 @@ function CERow({ label, value, pct, bold, indent, positive, negative, total }: {
 }
 
 function SPRow({ label, value, bold, indent, negative, total, positive }: any) {
+  const knownValue = value != null && Number.isFinite(value);
   return (
     <div className={`flex items-center justify-between py-1.5 ${bold ? "font-semibold" : ""} ${total ? "bg-slate-50 -mx-2 px-2 rounded" : ""}`}>
       <span className={`${indent ? "pl-4" : ""} ${bold ? "text-slate-900" : "text-slate-600"}`}>{label}</span>
-      <span className={`font-mono ${negative ? "text-red-600" : positive ? "text-emerald-600" : bold ? "text-slate-900" : "text-slate-700"}`}>
-        {value < 0 ? "-" : ""}€ {Math.abs(Math.round(value)).toLocaleString("it-IT")}
+      <span className={`font-mono ${!knownValue ? "text-slate-400" : negative ? "text-red-600" : positive ? "text-emerald-600" : bold ? "text-slate-900" : "text-slate-700"}`}>
+        {knownValue ? `${value < 0 ? "−" : ""}€ ${Math.abs(Math.round(value)).toLocaleString("it-IT")}` : "N/D"}
       </span>
     </div>
   );

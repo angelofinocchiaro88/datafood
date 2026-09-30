@@ -402,6 +402,34 @@ export async function GET(request: NextRequest) {
     trendsByMonth.set(month, row);
   }
   const managementTrend = Array.from(trendsByMonth.values()).map(row => ({ ...row, totalRevenue: row.revenue + row.issuedRevenue })).sort((a, b) => a.month.localeCompare(b.month));
+  const invoiceDetails: any[] = [];
+  for (const invoice of currentInvoices) {
+    const classification = {
+      invoiceId: invoice.id,
+      date: invoice.invoiceDate,
+      invoiceNumber: invoice.invoiceNumber,
+      supplier: invoice.supplier?.name || invoice.senderName,
+      macroArea: invoice.macroArea,
+      contoGestionale: invoice.contoGestionale,
+      category: invoice.categoria,
+      subcategory: invoice.sottocategoria,
+      detail: invoice.voceDettaglio,
+    };
+    if (invoice.items.length === 0) {
+      invoiceDetails.push({ ...classification, id: invoice.id, description: "Totale documento (nessun dettaglio riga)", quantity: null, unitPrice: null, lineTotal: invoice.totalAmount, vatRate: null, ingredient: null });
+    } else {
+      for (const item of invoice.items) invoiceDetails.push({
+        ...classification,
+        id: item.id,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        lineTotal: item.totalPrice,
+        vatRate: item.vatRate,
+        ingredient: item.ingredient?.name || null,
+      });
+    }
+  }
 
   const alerts = [];
   if (sales.receipts === 0) alerts.push({ level: "info", code: "no-sales", title: "Nessun corrispettivo POS nel periodo", detail: "Verifica l’intervallo o importa i corrispettivi con gli articoli venduti.", href: "/vendite" });
@@ -489,6 +517,7 @@ export async function GET(request: NextRequest) {
     },
     trends: managementTrend,
     costAreas: invoiceSummary.byArea,
+    invoiceDetails,
     suppliers: invoiceSummary.bySupplier,
     purchasePriceChanges,
     topDishes: sales.dishes,
