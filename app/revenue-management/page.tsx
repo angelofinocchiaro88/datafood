@@ -55,7 +55,7 @@ export default function RevenueManagementPage() {
     setLoading(true);
     setError("");
     fetch(`/api/revenue-management?${params.toString()}`, { signal: controller.signal })
-      .then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error || "Caricamento Revenue Management non riuscito"); setData(result); })
+      .then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error || "Caricamento dell’analisi non riuscito"); setData(result); })
       .catch(reason => { if (reason.name !== "AbortError") setError(reason.message || "Errore di caricamento"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -68,8 +68,8 @@ export default function RevenueManagementPage() {
   const beRevenue = fixedCosts !== "" && data?.summary.contributionPct != null ? calcBreakEvenRevenue(Number(fixedCosts), data.summary.contributionPct) : null;
   const beChecks = beRevenue != null && data.summary.averageCheck > 0 ? beRevenue / data.summary.averageCheck : null;
 
-  if (loading && !data) return <div className="p-8 text-center text-slate-400">Caricamento Revenue Management…</div>;
-  if (!data) return <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">{error || "Revenue Management non disponibile."}</div>;
+  if (loading && !data) return <div className="p-8 text-center text-slate-400">Caricamento analisi ricavi…</div>;
+  if (!data) return <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">{error || "Analisi ricavi non disponibile."}</div>;
 
   const bestDaypart = data.summary.dayparts.filter((slot: any) => slot.receipts >= 3).sort((a: any, b: any) => (b.revenue / b.receipts) - (a.revenue / a.receipts))[0];
   const quietDaypart = data.summary.dayparts.filter((slot: any) => slot.receipts >= 3).sort((a: any, b: any) => (a.revenue / a.receipts) - (b.revenue / b.receipts))[0];
@@ -104,7 +104,7 @@ export default function RevenueManagementPage() {
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0"/><p>{data.summary.unlinkedLines > 0 ? `${data.summary.unlinkedLines} righe vendita non associate a un piatto. ` : ""}{data.summary.missingRecipeLines > 0 ? `${data.summary.missingRecipeLines} righe vendute senza costo ricetta completo. ` : ""}{data.summary.receipts > 0 && !timeDataAdequate ? "Le vendite non hanno un orario affidabile: l’analisi per fascia oraria è incompleta." : ""}</p></div>
       )}
 
-      {data.summary.revenue === 0 && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"><strong>Nessun ricavo registrato nel periodo selezionato.</strong><p className="mt-1 text-sky-800">Revenue Management non stima domanda o fasce orarie da dati assenti. Importa le vendite con date, orari e righe prodotto.</p><Link href="/vendite" className="mt-2 inline-flex font-semibold text-sky-800 underline">Vai a Vendite</Link></div>}
+      {data.summary.revenue === 0 && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"><strong>Nessun ricavo registrato nel periodo selezionato.</strong><p className="mt-1 text-sky-800">L’analisi non stima domanda o fasce orarie da dati assenti. Importa le vendite con date, orari e righe prodotto.</p><Link href="/vendite" className="mt-2 inline-flex font-semibold text-sky-800 underline">Vai a Vendite</Link></div>}
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Metric label="Ricavi netti" value={money(data.summary.revenue)} detail={`${data.summary.receipts} scontrini nel filtro`} change={data.comparison.revenue} icon={<CircleDollarSign className="h-4 w-4"/>}/>
