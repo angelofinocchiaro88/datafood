@@ -1,244 +1,243 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { TrendingUp, TrendingDown, Calculator, PieChart, AlertTriangle, Users, Clock, UtensilsCrossed, Gauge, Scale, Wallet, Truck, Calendar, ChevronRight, Landmark } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Banknote, BarChart3, CircleHelp, Package, Target, TrendingUp, Users } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const PERIODS = [
-  { key: "oggi", label: "Oggi" },
-  { key: "settimana", label: "Settimana" },
-  { key: "mese", label: "Mese" },
-  { key: "trimestre", label: "Trimestre" },
+  { key: "mese", label: "Mese corrente" },
+  { key: "trimestre", label: "Trimestre corrente" },
+  { key: "anno", label: "Anno corrente" },
+  { key: "custom", label: "Date personalizzate" },
 ];
 
+function localDate(date: Date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function money(value: number | null | undefined, digits = 0) {
+  if (value == null || !Number.isFinite(value)) return "N/D";
+  return `€ ${value.toLocaleString("it-IT", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+function percent(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? "N/D" : `${value.toFixed(1)}%`;
+}
+
+function displayDate(value: string) {
+  return new Date(`${value}T12:00:00`).toLocaleDateString("it-IT");
+}
+
+function sourceLabel(source: string) {
+  if (source === "consuntivo") return "Consuntivo";
+  if (source === "misto") return "Misto";
+  if (source === "stima") return "Stima";
+  return "Non disponibile";
+}
+
 export default function CostControlPage() {
+  const now = new Date();
+  const [period, setPeriod] = useState("anno");
+  const [from, setFrom] = useState(`${now.getFullYear()}-01-01`);
+  const [to, setTo] = useState(localDate(now));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState("trimestre");
+  const [error, setError] = useState("");
 
-  useEffect(() => { load(period); }, [period]);
-
-  const load = async (p: string) => {
+  useEffect(() => {
+    if (period === "custom" && (!from || !to || from > to)) {
+      setLoading(false);
+      setError("Seleziona un intervallo date valido.");
+      return;
+    }
+    const params = new URLSearchParams({ period });
+    if (period === "custom") { params.set("from", from); params.set("to", to); }
+    const controller = new AbortController();
     setLoading(true);
-    try { setData(await fetch(`/api/cost-control?period=${p}`).then(r => r.json())); } catch {}
-    setLoading(false);
-  };
+    setError("");
+    fetch(`/api/cost-control?${params.toString()}`, { signal: controller.signal })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Caricamento del controllo non riuscito");
+        setData(result);
+      })
+      .catch(reason => { if (reason.name !== "AbortError") setError(reason.message || "Errore di caricamento"); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [period, from, to]);
 
-  const fm = (v: number) => `€ ${Math.round(v).toLocaleString("it-IT")}`;
-  const pct = (v: number) => `${v.toFixed(1)}%`;
+  if (loading && !data) return <div className="p-8 text-center text-slate-400">Caricamento controllo di gestione…</div>;
+  if (!data) return <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">{error || "Controllo di gestione non disponibile."}</div>;
 
-  if (loading && !data) return <div className="p-8 text-center text-slate-400">Caricamento...</div>;
-  if (!data) return <div className="p-8 text-center text-slate-400">Errore</div>;
-
-  const p = data.pnl;
-  const i = data.indicatori;
+  const kpi = data.kpi;
+  const sources = data.sources;
+  const target = data.budget;
+  const fcTarget = target.foodCostPct;
+  const laborTarget = target.laborCostPct;
+  const budgetRevenueDelta = data.budgetVariance.revenue;
+  const chartData = data.trends.map((month: any) => ({ ...month, monthLabel: new Date(`${month.month}-15T12:00:00`).toLocaleDateString("it-IT", { month: "short" }) }));
+  const dataQuality = kpi.ebitdaQuality === "completo" ? "fonti complete" : kpi.ebitdaQuality === "non_disponibile" ? "dati insufficienti" : "parziale: consulta coperture";
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto">
-      {/* HEADER */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+    <div className="mx-auto max-w-7xl space-y-5 pb-8">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">Cost Control</h1>
-          <p className="text-xs text-slate-500">{data.restaurantName} · centralina di controllo {data.period}</p>
+          <p className="text-xs font-semibold uppercase tracking-widest text-emerald-700">DATAFOOD · Area consulenza</p>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">Controllo di Gestione</h1>
+          <p className="mt-1 text-sm text-slate-500">{data.restaurantName} · {data.period.label} · {displayDate(data.period.from)} – {displayDate(data.period.to)}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-slate-100 rounded-lg p-0.5">
-            {PERIODS.map(p => (
-              <button key={p.key} onClick={() => setPeriod(p.key)} className={`px-3 py-1.5 rounded-md text-xs font-medium ${period === p.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{p.label}</button>
-            ))}
-          </div>
-          <Link href="/bilancio" className="text-xs text-emerald-600 hover:underline flex items-center gap-1"><Scale className="w-3.5 h-3.5" /> Bilancio</Link>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs text-slate-500">Periodo<select value={period} onChange={event => setPeriod(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">{PERIODS.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}</select></label>
+          {period === "custom" && <><label className="text-xs text-slate-500">Dal<input type="date" value={from} onChange={event => setFrom(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm"/></label><label className="text-xs text-slate-500">Al<input type="date" value={to} onChange={event => setTo(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm"/></label></>}
+          <Link href="/budget" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-emerald-400">Budget →</Link>
+          <Link href="/bilancio" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-emerald-400">Bilancio →</Link>
         </div>
-      </div>
+      </header>
 
-      {/* ALERT */}
-      {data.alerts.length > 0 && (
-        <div className="space-y-1.5">
-          {data.alerts.map((a: any, idx: number) => (
-            <div key={idx} className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border ${a.level === "critico" ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {a.msg}
-            </div>
-          ))}
-        </div>
-      )}
+      {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {loading && <div className="text-xs text-emerald-700">Aggiornamento dati…</div>}
 
-      {/* KPI PRINCIPALI */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi label="Ricavi" value={fm(p.ricavi)} sub={`${i.transazioni} transazioni`} color="default" />
-        <Kpi label="EBITDA" value={fm(p.ebitda)} sub={`margine ${pct(i.ebitdaPct)}`} color={p.ebitda >= 0 ? "green" : "red"} badge={i.personaleStimato ? "pers. stimato" : ""} />
-        <Kpi label="Utile netto" value={fm(p.utile_netto)} sub={`dopo ammortamenti e oneri`} color={p.utile_netto >= 0 ? "green" : "red"} />
-        <Kpi label="Liquidità" value={fm(data.liquidita)} sub={`uscite 30gg: ${fm(data.prossimeUscite30)}`} color={data.liquidita > data.prossimeUscite30 ? "green" : "amber"} />
-      </div>
+      <section className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {data.alerts.slice(0, 6).map((alert: any) => <Link key={alert.code} href={alert.href} className={`flex items-start gap-2 rounded-lg border p-3 transition hover:shadow-sm ${alert.level === "critical" ? "border-rose-200 bg-rose-50" : alert.level === "warning" ? "border-amber-200 bg-amber-50" : "border-sky-200 bg-sky-50"}`}>
+          <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${alert.level === "critical" ? "text-rose-600" : alert.level === "warning" ? "text-amber-600" : "text-sky-600"}`} />
+          <span><span className="block text-sm font-semibold text-slate-800">{alert.title}</span><span className="mt-0.5 block text-xs text-slate-600">{alert.detail}</span></span>
+        </Link>)}
+        {data.alerts.length === 0 && <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><BadgeCheck className="h-4 w-4"/>Nessuna anomalia rilevata nelle fonti presenti.</div>}
+      </section>
 
-      {/* INDICATORI OPERATIVI (stile Tomato AI) */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-800">Indicatori operativi</h2>
-          <span className="text-xs text-slate-400">produttività e costi unitari</span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <OpInd icon={<UtensilsCrossed className="w-4 h-4" />} label="Ricavo medio/coperto" value={`€ ${i.ricavoMedioCoperto}`} color="indigo" />
-          <OpInd icon={<Calculator className="w-4 h-4" />} label="Costo pasto" value={`€ ${i.costoPasto}`} sub="materie/coperto" color="rose" />
-          <OpInd icon={<PieChart className="w-4 h-4" />} label="Costo pasto primo" value={`€ ${i.costoPastoPrimo}`} sub="prime cost/coperto" color="amber" />
-          <OpInd icon={<Clock className="w-4 h-4" />} label="Produttività oraria" value={`€ ${i.produttivitaOraria}`} sub="ricavo/ora" color="emerald" />
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-          <OpInd icon={<Users className="w-4 h-4" />} label="Incidenza personale" value={pct(i.incidenzaPersonale)} sub="su ricavi" color={i.incidenzaPersonale > 32 ? "red" : "green"} />
-          <OpInd icon={<Gauge className="w-4 h-4" />} label="Coperti/ora" value={String(i.copertiOra)} sub="produttività sala" color="sky" />
-          <OpInd icon={<TrendingDown className="w-4 h-4" />} label="Food cost %" value={pct(i.foodCostPct)} sub={`bev ${pct(i.beverageCostPct)}`} color={i.foodCostPct > 33 ? "red" : "green"} />
-          <OpInd icon={<TrendingUp className="w-4 h-4" />} label="Scontrino medio" value={`€ ${i.scontrinoMedio}`} sub="ricavi/transaz." color="slate" />
-        </div>
-      </div>
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <Metric label="Ricavi netti" value={money(kpi.revenue)} detail={`${kpi.receipts} scontrini POS · ${money(kpi.issuedRevenue)} fatture emesse`} change={data.comparison.revenue} icon={<Banknote className="h-4 w-4"/>}/>
+        <Metric label="Food Cost teorico" value={percent(kpi.theoreticalFoodCostPct)} detail={`${percent(kpi.costCoveragePct)} dei ricavi coperti da ricette complete`} target={fcTarget == null ? null : `${fcTarget.toFixed(1)}% target`} icon={<Package className="h-4 w-4"/>} warning={fcTarget != null && kpi.theoreticalFoodCostPct != null && kpi.theoreticalFoodCostPct > fcTarget}/>
+        <Metric label="Labor Cost" value={percent(kpi.laborPct)} detail={sourceLabel(sources.payroll.source)} target={laborTarget == null ? null : `${laborTarget.toFixed(1)}% budget`} icon={<Users className="h-4 w-4"/>} warning={laborTarget != null && kpi.laborPct != null && kpi.laborPct > laborTarget}/>
+        <Metric label="EBITDA gestionale" value={money(kpi.ebitdaEstimate)} detail={dataQuality} change={data.comparison.ebitda} icon={<TrendingUp className="h-4 w-4"/>} warning={kpi.ebitdaQuality !== "completo"}/>
+      </section>
 
-      {/* CE COMPATTO + MARGINI */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Conto Economico compatto */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-800">Conto Economico automatico</h2>
-            <Link href="/bilancio" className="text-xs text-emerald-600 hover:underline flex items-center gap-1">dettaglio <ChevronRight className="w-3 h-3" /></Link>
-          </div>
-          <div className="space-y-1 text-sm">
-            <Row label="Ricavi totali" value={fm(p.ricavi)} bold positive />
-            <Row label="Materie prime" value={`-${fm(p.tot_materie)}`} negative />
-            <div className="border-t border-slate-100 my-1" />
-            <Row label="Margine lordo" value={fm(p.margine_lordo)} bold positive />
-            <Row label="Personale" value={`-${fm(p.personale)}`} negative />
-            <Row label="Costi fissi" value={`-${fm(p.costi_fissi)}`} negative />
-            <div className="border-t border-slate-100 my-1" />
-            <Row label="EBITDA" value={fm(p.ebitda)} bold positive={p.ebitda > 0} />
-            <Row label="Ammortamenti" value={`-${fm(p.ammortamenti)}`} negative />
-            <Row label="Utile netto" value={fm(p.utile_netto)} bold positive={p.utile_netto > 0} />
-          </div>
-        </div>
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SmallMetric label="Scontrino medio" value={money(kpi.averageCheck, 2)} detail="ricavi POS netti / scontrini" />
+        <SmallMetric label="Ricavo per coperto" value={money(kpi.revenuePerCover, 2)} detail={`${kpi.covers.toLocaleString("it-IT")} coperti`} />
+        <SmallMetric label="Costo teorico per coperto" value={money(kpi.theoreticalCostPerCover, 2)} detail="ricette vendute / coperti" />
+        <SmallMetric label="Prime Cost" value={percent(kpi.primeCostPct)} detail="Food Cost teorico + personale" />
+      </section>
 
-        {/* Prime cost / food cost / labor */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <h2 className="text-sm font-semibold text-slate-800 mb-3">Sintesi marginalità</h2>
-          <div className="space-y-3">
-            <MarginBar label="Food cost" val={i.foodCostPct} target={30} />
-            <MarginBar label="Labor cost" val={i.laborPct} target={30} />
-            <MarginBar label="Beverage cost" val={i.beverageCostPct} target={25} />
-            <div className="border-t border-slate-100 pt-3">
-              <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Prime cost</span><span className={`font-bold ${i.primeCostPct > 60 ? "text-red-600" : "text-emerald-600"}`}>{pct(i.primeCostPct)}</span></div>
-              <p className="text-xs text-slate-400 mt-0.5">target ≤ 60% · food + labor</p>
-            </div>
-          </div>
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-end justify-between gap-3"><div><h2 className="font-semibold text-slate-900">Andamento economico</h2><p className="text-xs text-slate-500">Ricavi mensili netti e margine di contribuzione teorico</p></div><span className="text-[11px] text-slate-400">mensile</span></div>
+          {chartData.length > 0 ? <div className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} margin={{ top: 5, right: 12, bottom: 0, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0"/><XAxis dataKey="monthLabel" fontSize={11} stroke="#64748b"/><YAxis fontSize={10} stroke="#64748b" tickFormatter={value => `€${Math.round(value / 1000)}k`}/>
+            <Tooltip formatter={(value: any) => money(Number(value))}/><Bar dataKey="revenue" name="Vendite POS" stackId="revenue" fill="#10b981" radius={[0,0,0,0]}/><Bar dataKey="issuedRevenue" name="Fatture emesse" stackId="revenue" fill="#38bdf8" radius={[3,3,0,0]}/>
+          </BarChart></ResponsiveContainer></div> : <Empty text="Nessun ricavo registrato nel periodo."/>}
         </div>
-      </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">Budget vs consuntivo</h2><p className="text-xs text-slate-500">Obiettivi salvati per i mesi del periodo</p></div><Target className="h-4 w-4 text-emerald-600"/></div>
+          {target.configuredMonths > 0 ? <div className="space-y-4">
+            <Variance label="Ricavi" actual={kpi.revenue} target={target.revenueTarget} variance={budgetRevenueDelta} />
+            <PercentVariance label="Food Cost teorico" actual={kpi.theoreticalFoodCostPct} target={target.foodCostPct} variance={data.budgetVariance.foodCostPct?.puntiPercentuali} lowerIsBetter />
+            <PercentVariance label="Labor Cost" actual={kpi.laborPct} target={target.laborCostPct} variance={data.budgetVariance.laborPct?.puntiPercentuali} lowerIsBetter />
+            <p className="text-[11px] text-slate-400">Target configurati {target.configuredMonths}/{target.months} mesi · coperti obiettivo {target.coversTarget?.toLocaleString("it-IT") ?? "N/D"}</p>
+          </div> : <Empty text="Non ci sono target salvati per questo periodo. Imposta ricavi e incidenze mensili per leggere gli scostamenti." link="/budget" linkLabel="Apri Budget"/>}
+        </div>
+      </section>
 
-      {/* FORNITORI + SCADENZE */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Monitoraggio fornitori */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Truck className="w-4 h-4 text-rose-500" /> Monitoraggio fornitori</h2>
-            <Link href="/fornitori" className="text-xs text-emerald-600 hover:underline">gestisci</Link>
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-200 px-4 py-3"><h2 className="font-semibold text-slate-900">Conto Economico gestionale</h2><p className="text-xs text-slate-500">Consumi da ricetta e vendite; costi operativi da fatture approvate e classificate.</p></div>
+          <div className="divide-y divide-slate-100">
+            <PnlRow label="Ricavi netti complessivi" value={data.pnl.revenue} type="positive" strong />
+            <PnlRow label="di cui vendite POS" value={data.pnl.posRevenue} type="positive" />
+            <PnlRow label="di cui fatture emesse / eventi" value={data.pnl.issuedRevenue} type="positive" />
+            <PnlRow label="Food Cost teorico venduto" value={-data.pnl.theoreticalFoodCost} type="negative" note={`${percent(sources.recipeCosts.costCoveragePct)} copertura ricette`}/>
+            <PnlRow label="Beverage Cost teorico venduto" value={-data.pnl.theoreticalBeverageCost} type="negative"/>
+            <PnlRow label="Margine lordo teorico POS" value={data.pnl.grossMargin} type="subtotal" strong note="fatture evento escluse dal COGS ricetta"/>
+            <PnlRow label="Costo del personale" value={data.pnl.payroll == null ? null : -data.pnl.payroll} type="negative" note={sourceLabel(sources.payroll.source)}/>
+            <PnlRow label="Altri costi da fatture classificate" value={-data.pnl.operatingInvoices} type="negative" note={`${sources.invoices.classified}/${sources.invoices.approved} classificate`}/>
+            <PnlRow label="EBITDA gestionale preliminare" value={data.pnl.EBITDAEstimate} type="subtotal" strong note={kpi.ebitdaQuality === "completo" ? "fonti coperte" : "parziale: vedi qualità dati"}/>
+            <PnlRow label="Ammortamenti stimati" value={-data.pnl.depreciationEstimate} type="negative"/>
+            <PnlRow label="Risultato operativo preliminare" value={data.pnl.operatingResultEstimate} type="final" strong/>
           </div>
-          <div className="space-y-2">
-            {data.fornitori.slice(0, 5).map((f: any) => (
-              <div key={f.id} className="flex justify-between items-center py-1.5 border-b border-slate-50 text-sm">
-                <span className="text-slate-600">{f.name}</span>
-                <span className="text-slate-500 text-xs">{f.fatture} fatture</span>
-                <span className="font-mono">{fm(f.totale)}</span>
-              </div>
-            ))}
-            {data.fornitori.length === 0 && <p className="text-sm text-slate-400 text-center py-2">Nessun acquisto registrato</p>}
+          <div className="grid grid-cols-2 gap-3 border-t border-slate-200 bg-slate-50 p-4 text-xs">
+            <div><p className="text-slate-500">Acquisti food da fatture</p><p className="mt-0.5 font-semibold text-slate-800">{money(data.pnl.purchasesFood)}</p><p className="text-[10px] text-slate-400">acquisti, non consumo del periodo</p></div>
+            <div><p className="text-slate-500">Acquisti beverage da fatture</p><p className="mt-0.5 font-semibold text-slate-800">{money(data.pnl.purchasesBeverage)}</p><p className="text-[10px] text-slate-400">confrontali con inventario e consumi</p></div>
           </div>
+          <div className="flex items-start gap-2 border-t border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><CircleHelp className="mt-0.5 h-4 w-4 shrink-0"/>Il Food Cost esposto è teorico da ricette e vendite. Gli acquisti da fatture sono mostrati a parte perché senza inventario iniziale/finale non equivalgono al consumo. Il risultato operativo è preliminare, non un bilancio civilistico.</div>
         </div>
 
-        {/* Prossime scadenze */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Calendar className="w-4 h-4 text-amber-500" /> Prossime scadenze</h2>
-            <Link href="/cash-flow" className="text-xs text-emerald-600 hover:underline">cash flow</Link>
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">Dove nasce il margine</h2><p className="text-xs text-slate-500">Contribuzione teorica per sezione venduta</p></div><Link href="/menu" className="text-xs font-medium text-emerald-700 hover:underline">Menu Engineering</Link></div>
+            {data.topDishes.length > 0 ? <div className="space-y-2">{data.topDishes.slice(0, 5).map((dish: any) => <div key={dish.id} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 last:border-0"><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-800">{dish.name}</p><p className="text-[11px] text-slate-400">{dish.category} · {dish.quantity.toLocaleString("it-IT", { maximumFractionDigits: 1 })} porzioni {dish.complete ? "· ricetta completa" : "· costo da completare"}</p></div><div className="shrink-0 text-right"><p className="text-sm font-semibold text-slate-900">{money(dish.revenue - dish.cost)}</p><p className="text-[10px] text-slate-400">margine teorico</p></div></div>)}</div> : <Empty text="Nessuna vendita associata a un piatto nel periodo." link="/vendite" linkLabel="Verifica vendite"/>}
           </div>
-          <div className="space-y-2">
-            {data.scadenze.slice(0, 5).map((s: any) => {
-              const daysTo = Math.ceil((new Date(s.dueDate).getTime() - Date.now()) / 86400000);
-              return (
-                <div key={s.id} className={`flex justify-between items-center py-1.5 border-b border-slate-50 text-sm ${daysTo <= 7 ? "bg-amber-50 rounded px-2" : ""}`}>
-                  <div>
-                    <p className="text-slate-700 text-xs">{s.description}</p>
-                    <p className="text-slate-400 text-xs">{new Date(s.dueDate).toLocaleDateString("it-IT")} · {daysTo <= 0 ? "scaduta" : `in ${daysTo}gg`}</p>
-                  </div>
-                  <span className={`font-mono ${s.type === "payment" ? "text-red-600" : "text-emerald-600"}`}>{s.type === "payment" ? "-" : "+"}€ {Math.round(s.amount).toLocaleString("it-IT")}</span>
-                </div>
-              );
-            })}
-            {data.scadenze.length === 0 && <p className="text-sm text-slate-400 text-center py-2">Nessuna scadenza</p>}
-            <div className="flex justify-between text-xs text-slate-500 pt-2">
-              <span>Uscite 30gg: <strong className="text-red-600">{fm(data.prossimeUscite30)}</strong></span>
-              <span>Incassi 30gg: <strong className="text-emerald-600">{fm(data.prossimiIncassi30)}</strong></span>
-            </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">Struttura dei costi</h2><p className="text-xs text-slate-500">Fatture approvate per conto gestionale</p></div><Link href="/bilancio" className="text-xs font-medium text-emerald-700 hover:underline">Dettaglio CE</Link></div>
+            {data.costAreas.length > 0 ? <div className="space-y-2">{data.costAreas.slice(0, 6).map((area: any) => <div key={area.name} className="flex items-center justify-between gap-2 text-sm"><span className="truncate text-slate-600">{area.name}</span><span className="shrink-0 font-mono text-slate-800">{money(area.amount)}</span></div>)}</div> : <Empty text="Nessuna fattura approvata nel periodo." link="/accounting" linkLabel="Classifica fatture"/>}
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* FONTI DATI */}
-      <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 text-xs text-slate-500 flex flex-wrap gap-3">
-        <span>Fonti dati:</span>
-        <Link href="/food-cost" className="hover:text-emerald-600">Food Cost</Link>·
-        <Link href="/vendite" className="hover:text-emerald-600">Vendite</Link>·
-        <Link href="/accounting" className="hover:text-emerald-600">Fatture</Link>·
-        <Link href="/personale" className="hover:text-emerald-600">Personale</Link>·
-        <Link href="/cash-flow" className="hover:text-emerald-600">Cash Flow</Link>·
-        <Link href="/ammortamenti" className="hover:text-emerald-600">Ammortamenti</Link>
-      </div>
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">Andamento acquisti fornitori</h2><p className="text-xs text-slate-500">Spesa da fatture approvate nel periodo</p></div><Link href="/fornitori" className="text-xs text-emerald-700 hover:underline">Fornitori</Link></div>
+          {data.suppliers.length > 0 ? <div className="space-y-2">{data.suppliers.slice(0, 6).map((supplier: any) => <div key={supplier.id} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 last:border-0"><div><p className="text-sm font-medium text-slate-800">{supplier.name}</p><p className="text-[11px] text-slate-400">{supplier.invoices} fatture</p></div><p className="font-mono text-sm">{money(supplier.amount)}</p></div>)}</div> : <Empty text="Nessun acquisto registrato nel periodo." link="/accounting" linkLabel="Vai ad Accounting"/>}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">Variazioni prezzi d’acquisto</h2><p className="text-xs text-slate-500">Ingredienti collegati a fatture, confronto con il periodo precedente</p></div><Link href="/food-cost" className="text-xs text-emerald-700 hover:underline">Costi ricette</Link></div>
+          {data.purchasePriceChanges.length > 0 ? <div className="space-y-2">{data.purchasePriceChanges.map((change: any) => <div key={`${change.ingredient}-${change.supplier}`} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 last:border-0"><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-800">{change.ingredient}</p><p className="text-[11px] text-slate-400">{change.supplier} · {money(change.previousPrice, 2)} → {money(change.currentPrice, 2)}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${change.changePct > 0 ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>{change.changePct > 0 ? "+" : ""}{change.changePct?.toFixed(1)}%</span></div>)}</div> : <Empty text="Non ci sono righe fattura collegate allo stesso ingrediente in entrambi i periodi." link="/accounting" linkLabel="Collega righe fattura"/>}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold text-slate-900">Qualità e copertura del dato</h2><p className="text-xs text-slate-500">La solidità del risultato dipende da queste fonti.</p></div><Link href="/report" className="text-xs font-medium text-emerald-700 hover:underline">KPI Registry →</Link></div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <Coverage label="Vendite collegate" value={percent(sources.sales.netRevenueCoveragePct)} detail={`${sources.sales.linkedLines} righe collegate · ${sources.sales.unlinkedSaleLines} senza piatto`} />
+          <Coverage label="Ricette complete sulle vendite" value={percent(sources.recipeCosts.costCoveragePct)} detail={`${sources.recipeCosts.missingLines} righe vendute non calcolabili`} />
+          <Coverage label="Fatture classificate" value={percent(sources.invoices.classificationCoveragePct)} detail={`${sources.invoices.classified}/${sources.invoices.approved} approvate`} />
+          <Coverage label="Costo personale" value={sourceLabel(sources.payroll.source)} detail={`${sources.payroll.actualMonths} mesi consuntivi · ${sources.payroll.estimatedMonths} stimati · ${sources.payroll.missingMonths} mancanti`} />
+        </div>
+      </section>
+
+      <section className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+        <span className="font-semibold text-slate-700">Approfondisci:</span>
+        <Link href="/food-cost" className="hover:text-emerald-700">Schede ricetta</Link><span>·</span><Link href="/menu" className="hover:text-emerald-700">Menu Engineering</Link><span>·</span><Link href="/accounting" className="hover:text-emerald-700">Fatture</Link><span>·</span><Link href="/personale" className="hover:text-emerald-700">Personale</Link><span>·</span><Link href="/cash-flow" className="hover:text-emerald-700">Cash Flow</Link><span>·</span><Link href="/magazzino" className="hover:text-emerald-700">Magazzino</Link>
+      </section>
     </div>
   );
 }
 
-function Kpi({ label, value, sub, color, badge }: any) {
-  const c: Record<string, string> = { default: "text-slate-900", green: "text-emerald-700", red: "text-red-700", amber: "text-amber-700" };
-  const b: Record<string, string> = { default: "border-slate-200", green: "border-emerald-200", red: "border-red-200", amber: "border-amber-200" };
-  return (
-    <div className={`bg-white rounded-xl border ${b[color]} p-3.5`}>
-      <div className="flex items-center justify-between mb-1">
-        <p className="text-xs font-medium text-slate-500">{label}</p>
-        {badge && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{badge}</span>}
-      </div>
-      <p className={`text-xl font-bold ${c[color]}`}>{value}</p>
-      {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
-    </div>
-  );
+function Metric({ label, value, detail, change, target, icon, warning }: { label: string; value: string; detail: string; change?: { assoluta: number; pct: number | null }; target?: string | null; icon: React.ReactNode; warning?: boolean }) {
+  return <div className={`rounded-xl border bg-white p-3.5 ${warning ? "border-amber-300" : "border-slate-200"}`}><div className="mb-2 flex items-center justify-between"><div className="flex items-center gap-2 text-xs font-medium text-slate-500"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">{icon}</span>{label}</div>{target && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{target}</span>}</div><p className="text-xl font-bold text-slate-900">{value}</p><p className="mt-0.5 text-xs text-slate-400">{detail}</p>{change && <Delta change={change}/>}</div>;
 }
 
-function OpInd({ icon, label, value, sub, color }: any) {
-  const m: Record<string, string> = { indigo: "from-indigo-500 to-purple-600", rose: "from-rose-500 to-pink-600", amber: "from-amber-500 to-orange-600", emerald: "from-emerald-500 to-teal-600", green: "from-green-500 to-emerald-600", red: "from-red-500 to-rose-600", sky: "from-sky-500 to-blue-600", slate: "from-slate-500 to-slate-600" };
-  return (
-    <div className="bg-slate-50 rounded-lg p-3">
-      <div className="flex items-center gap-2 mb-1">
-        <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${m[color] || "from-slate-500 to-slate-600"} flex items-center justify-center text-white`}>{icon}</div>
-        <span className="text-[11px] text-slate-500">{label}</span>
-      </div>
-      <p className="text-lg font-bold text-slate-900">{value}</p>
-      {sub && <p className="text-xs text-slate-400">{sub}</p>}
-    </div>
-  );
+function Delta({ change }: { change: { assoluta: number; pct: number | null } }) {
+  const up = change.assoluta >= 0;
+  const sign = up ? "+" : "−";
+  return <p className={`mt-1 text-[11px] font-medium ${up ? "text-emerald-700" : "text-rose-700"}`}>{sign}{money(Math.abs(change.assoluta))}{change.pct == null ? "" : ` · ${sign}${Math.abs(change.pct).toFixed(1)}%`} vs periodo precedente</p>;
 }
 
-function Row({ label, value, bold, positive, negative }: any) {
-  return (
-    <div className="flex justify-between py-1">
-      <span className={`${bold ? "font-semibold text-slate-900" : "text-slate-600"}`}>{label}</span>
-      <span className={`font-mono ${positive ? "text-emerald-600" : negative ? "text-red-600" : bold ? "text-slate-900" : "text-slate-700"}`}>{value}</span>
-    </div>
-  );
+function SmallMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return <div className="rounded-lg border border-slate-200 bg-white px-3 py-2"><p className="text-[11px] text-slate-500">{label}</p><p className="mt-0.5 font-semibold text-slate-800">{value}</p><p className="text-[10px] text-slate-400">{detail}</p></div>;
 }
 
-function MarginBar({ label, val, target }: any) {
-  const over = val > target;
-  const pct = (v: number) => `${v.toFixed(1)}%`;
-  return (
-    <div>
-      <div className="flex justify-between text-sm mb-1">
-        <span className="text-slate-600">{label}</span>
-        <span className={`font-medium ${over ? "text-red-600" : "text-emerald-600"}`}>{pct(val)}</span>
-      </div>
-      <div className="w-full bg-slate-100 rounded-full h-1.5">
-        <div className={`h-1.5 rounded-full ${over ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, (val / target) * 100)}%` }} />
-      </div>
-    </div>
-  );
+function PnlRow({ label, value, type, strong, note }: { label: string; value: number | null; type: "positive" | "negative" | "subtotal" | "final"; strong?: boolean; note?: string }) {
+  const color = type === "positive" ? "text-emerald-700" : type === "negative" ? "text-slate-700" : type === "final" && (value || 0) < 0 ? "text-rose-700" : type === "subtotal" || type === "final" ? "text-slate-900" : "text-slate-700";
+  return <div className={`flex items-center justify-between gap-3 px-4 py-2.5 ${type === "subtotal" ? "border-t border-slate-200 bg-slate-50" : type === "final" ? "border-t-2 border-slate-300 bg-slate-50" : ""}`}><span className={`${strong ? "font-semibold" : ""} text-sm text-slate-700`}>{label}{note && <span className="ml-2 text-[10px] font-normal text-slate-400">{note}</span>}</span><span className={`font-mono text-sm ${strong ? "font-bold" : "font-medium"} ${color}`}>{value == null ? "N/D" : `${value < 0 ? "−" : ""}${money(Math.abs(value))}`}</span></div>;
+}
+
+function Variance({ label, actual, target, variance }: { label: string; actual: number; target: number | null; variance: { assoluta: number; pct: number | null } | null }) {
+  if (target == null) return <div className="flex justify-between gap-3 text-sm"><span className="text-slate-600">{label}</span><span className="text-xs text-slate-400">Target non impostato</span></div>;
+  return <div><div className="flex justify-between gap-3 text-sm"><span className="text-slate-600">{label}</span><span className="font-medium text-slate-800">{money(actual)} / {money(target)}</span></div><div className="mt-1 flex justify-between text-[11px] text-slate-400"><span>Consuntivo / budget</span><span className={variance && variance.assoluta >= 0 ? "text-emerald-700" : "text-rose-700"}>{variance ? `${variance.assoluta >= 0 ? "+" : "−"}${money(Math.abs(variance.assoluta))} · ${variance.pct?.toFixed(1) ?? "N/D"}%` : "N/D"}</span></div></div>;
+}
+
+function PercentVariance({ label, actual, target, variance, lowerIsBetter }: { label: string; actual: number | null; target: number | null; variance: number | null; lowerIsBetter?: boolean }) {
+  if (target == null) return <div className="flex justify-between gap-3 text-sm"><span className="text-slate-600">{label}</span><span className="text-xs text-slate-400">Target non impostato</span></div>;
+  const favorable = variance == null ? null : lowerIsBetter ? variance <= 0 : variance >= 0;
+  return <div className="flex items-center justify-between gap-3 text-sm"><span className="text-slate-600">{label}</span><span className="text-right"><strong className="text-slate-800">{percent(actual)}</strong><span className="text-xs text-slate-400"> · target {percent(target)}</span><span className={`ml-1 text-xs ${favorable == null ? "text-slate-400" : favorable ? "text-emerald-700" : "text-rose-700"}`}>{variance == null ? "" : `${variance > 0 ? "+" : ""}${variance.toFixed(1)} p.p.`}</span></span></div>;
+}
+
+function Coverage({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-semibold text-slate-900">{value}</p><p className="mt-0.5 text-[10px] text-slate-400">{detail}</p></div>;
+}
+
+function Empty({ text, link, linkLabel }: { text: string; link?: string; linkLabel?: string }) {
+  return <div className="py-5 text-center text-sm text-slate-400">{text}{link && <Link href={link} className="ml-1 font-medium text-emerald-700 underline">{linkLabel}</Link>}</div>;
 }

@@ -64,7 +64,7 @@ const SECTIONS = [
     label: "CONTROLLO DI GESTIONE",
     color: "text-violet-700 border-violet-300",
     items: [
-      { icon: TrendingUp, label: "Cost Control", href: "/controllo-gestione" },
+      { icon: TrendingUp, label: "Controllo di Gestione", href: "/controllo-gestione" },
       { icon: Scale, label: "Bilancio (CE + SP)", href: "/bilancio" },
       { icon: PieChart, label: "KPI Report", href: "/report" },
       { icon: Target, label: "Budget", href: "/budget" },
