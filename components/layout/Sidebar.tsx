@@ -66,11 +66,17 @@ const SECTIONS = [
     color: "text-violet-700 border-violet-300",
     items: [
       { icon: TrendingUp, label: "Controllo di Gestione", href: "/controllo-gestione" },
-      { icon: Scale, label: "Bilancio (CE + SP)", href: "/bilancio" },
       { icon: PieChart, label: "KPI Report", href: "/report" },
       { icon: Target, label: "Budget", href: "/budget" },
       { icon: Wallet, label: "Cash Flow", href: "/cash-flow" },
       { icon: Calculator, label: "Ammortamenti", href: "/ammortamenti" },
+    ],
+  },
+  {
+    label: "BILANCIO",
+    color: "text-blue-700 border-blue-300",
+    items: [
+      { icon: Scale, label: "Bilancio (CE + SP)", href: "/bilancio" },
     ],
   },
   {

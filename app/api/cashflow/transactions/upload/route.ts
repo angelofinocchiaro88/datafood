@@ -58,31 +58,39 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const { accountId, transactions } = await request.json();
+    if (!accountId || !Array.isArray(transactions)) return NextResponse.json({ error: "Seleziona un conto e transazioni valide" }, { status: 400 });
+    const account = await prisma.account.findUnique({ where: { id: accountId }, select: { id: true, clientId: true } });
+    if (!account) return NextResponse.json({ error: "Conto non trovato" }, { status: 404 });
     let saved = 0;
     let skipped = 0;
 
     for (const tx of transactions) {
+      const amount = Number(tx.amount);
+      const date = new Date(tx.date);
+      if (!Number.isFinite(amount) || amount === 0 || Number.isNaN(date.getTime())) { skipped++; continue; }
       // Dedup: verifica esistente
       const exists = await prisma.cashTransaction.findFirst({
-        where: { accountId, date: new Date(tx.date), amount: tx.amount, description: tx.description },
+        where: { accountId: account.id, date, amount, description: tx.description || "" },
       });
       if (exists) { skipped++; continue; }
 
       let categoryId = null;
       if (tx.category) {
-        const cat = await prisma.cashFlowCategory.findFirst({ where: { name: tx.category } });
+        const cat = await prisma.cashFlowCategory.findFirst({ where: { clientId: account.clientId, name: tx.category } });
         if (cat) categoryId = cat.id;
       }
 
       await prisma.cashTransaction.create({
         data: {
-          accountId,
-          date: new Date(tx.date),
-          amount: tx.amount,
-          description: tx.description,
+          accountId: account.id,
+          clientId: account.clientId,
+          date,
+          amount,
+          description: tx.description || "",
           counterparty: tx.counterparty || "",
           categoryId,
           source: "bank_upload",
+          isReconciled: true,
         },
       });
       saved++;

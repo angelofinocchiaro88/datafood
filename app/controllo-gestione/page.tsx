@@ -91,7 +91,6 @@ export default function CostControlPage() {
           <label className="text-xs text-slate-500">Periodo<select value={period} onChange={event => setPeriod(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">{PERIODS.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}</select></label>
           {period === "custom" && <><label className="text-xs text-slate-500">Dal<input type="date" value={from} onChange={event => setFrom(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm"/></label><label className="text-xs text-slate-500">Al<input type="date" value={to} onChange={event => setTo(event.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm"/></label></>}
           <Link href="/budget" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-emerald-400">Budget →</Link>
-          <Link href="/bilancio" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-emerald-400">Bilancio →</Link>
         </div>
       </header>
 

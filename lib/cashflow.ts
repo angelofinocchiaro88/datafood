@@ -53,44 +53,46 @@ export interface ForecastWeek {
   net: number;
   endingBalance: number;
   atRisk: boolean;
+  scheduleCount: number;
 }
 
 export function generateForecast(
   startingBalance: number,
   scheduledItems: { dueDate: Date; amount: number; type: "payment" | "income"; probability: number }[],
-  weeks: number = 13
+  weeks: number = 13,
+  minimumBalance = 0,
+  asOf = new Date(),
 ): ForecastWeek[] {
   const result: ForecastWeek[] = [];
   let balance = startingBalance;
 
-  // Trova il prossimo lunedì
-  const today = new Date();
-  const day = today.getDay(); // 0=Sun, 1=Mon
+  // Inizia dalla settimana corrente; flussi base senza scadenze restano zero.
+  const today = new Date(asOf);
+  const day = today.getDay();
   const diffToMonday = (day + 6) % 7;
   const monday = new Date(today);
   monday.setDate(today.getDate() - diffToMonday);
   monday.setHours(0, 0, 0, 0);
 
-  // Media uscite settimanali (stima base se non ci sono dati)
-  const baseWeeklyOutflow = 6000;
-  const baseWeeklyInflow = 7500;
-
   for (let i = 0; i < weeks; i++) {
     const weekStart = new Date(monday);
     weekStart.setDate(monday.getDate() + i * 7);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
+    const weekEndExclusive = new Date(weekStart);
+    weekEndExclusive.setDate(weekStart.getDate() + 7);
+    const weekEnd = new Date(weekEndExclusive);
+    weekEnd.setDate(weekEnd.getDate() - 1);
 
-    let inflow = baseWeeklyInflow;
-    let outflow = baseWeeklyOutflow;
+    let inflow = 0;
+    let outflow = 0;
+    let scheduleCount = 0;
 
-    // Applica le scadenze previste in questa settimana
     for (const item of scheduledItems) {
       const d = new Date(item.dueDate);
-      if (d >= weekStart && d <= weekEnd) {
+      if (d >= weekStart && d < weekEndExclusive) {
         const weighted = item.amount * (item.probability / 100);
         if (item.type === "income") inflow += weighted;
         else outflow += weighted;
+        scheduleCount++;
       }
     }
 
@@ -104,17 +106,31 @@ export function generateForecast(
       outflow: Math.round(outflow),
       net: Math.round(net),
       endingBalance: Math.round(balance),
-      atRisk: balance < 0 || balance < baseWeeklyOutflow * 0.5,
+      atRisk: balance < minimumBalance,
+      scheduleCount,
     });
   }
 
   return result;
 }
 
-export function calculateRunway(forecast: ForecastWeek[], weeklyOutflow: number): number {
-  if (weeklyOutflow <= 0) return Infinity;
+export function calculateRunway(forecast: ForecastWeek[]): number | null {
   for (let i = 0; i < forecast.length; i++) {
-    if (forecast[i].endingBalance < 0) return i;
+    if (forecast[i].atRisk) return i + 1;
   }
-  return forecast.length;
+  return null;
+}
+
+export function nextRecurrenceDate(date: Date, recurrence: string): Date {
+  const result = new Date(date);
+  if (recurrence === "weekly") {
+    result.setDate(result.getDate() + 7);
+    return result;
+  }
+  const months = recurrence === "quarterly" ? 3 : recurrence === "yearly" ? 12 : 1;
+  const targetMonthIndex = result.getMonth() + months;
+  const targetYear = result.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const normalizedMonth = targetMonthIndex % 12;
+  const day = Math.min(result.getDate(), new Date(targetYear, normalizedMonth + 1, 0).getDate());
+  return new Date(targetYear, normalizedMonth, day, result.getHours(), result.getMinutes(), result.getSeconds(), result.getMilliseconds());
 }

@@ -487,12 +487,17 @@ model Account {
   currency    String   @default("EUR")
   type        String   @default("current") // current, cash, card
   status      String   @default("active")
+  openingBalance Float @default(0)
+  openingBalanceDate DateTime?
+  openingBalanceConfirmed Boolean @default(false)
+  minimumBalance Float @default(0)
   clientId    String   @default("default")
   client      Client?  @relation(fields: [clientId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   transactions CashTransaction[]
   forecasts   CashFlowForecast[]
+  schedules   PaymentSchedule[]
 }
 
 model CashFlowCategory {
@@ -557,6 +562,8 @@ model ForecastRule {
 
 model PaymentSchedule {
   id          String   @id @default(cuid())
+  accountId   String?
+  account     Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
   type        String   // payment, income
   categoryId  String?
   category    CashFlowCategory? @relation(fields: [categoryId], references: [id])
