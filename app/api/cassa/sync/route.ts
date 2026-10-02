@@ -1,172 +1,103 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { CassaInCloudClient, parseDateParam } from '@/lib/cassa';
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { CassaInCloudClient, parseDateParam } from "@/lib/cassa";
+
+function normalized(value: string) {
+  return value.trim().toLocaleLowerCase("it-IT").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { apiKey, salesPointIds, dateFrom, dateTo } = await request.json();
-
-    if (!apiKey) {
-      return NextResponse.json({ error: 'API key required' }, { status: 400 });
-    }
+    const { apiKey, salesPointIds, dateFrom, dateTo, clientId = "default" } = await request.json();
+    if (!apiKey) return NextResponse.json({ error: "API key required" }, { status: 400 });
 
     const client = new CassaInCloudClient({ apiKey });
+    const fromDate = dateFrom || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const toDate = dateTo || new Date().toISOString().slice(0, 10);
+    const apiSalesPointIds = Array.isArray(salesPointIds) ? salesPointIds.map(Number).filter(Number.isFinite) : [];
+    const dateParams = { datetimeFrom: parseDateParam(fromDate), datetimeTo: parseDateParam(toDate), idsSalesPoint: apiSalesPointIds };
 
-    const fromDate = dateFrom || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const toDate = dateTo || new Date().toISOString().split('T')[0];
+    // Department/product reports are aggregates; persisting them as Sale rows
+    // alongside receipts multiplies the same turnover in every downstream KPI.
+    const [productReport, departmentReport, dishes] = await Promise.all([
+      client.getSoldByProduct(dateParams),
+      apiSalesPointIds.length === 0 ? client.getSoldByDepartment(dateParams) : Promise.resolve({ sold: [] }),
+      prisma.dish.findMany({ where: { clientId }, select: { id: true, name: true, vatRate: true } }),
+    ]);
+    const dishByName = new Map(dishes.map(dish => [normalized(dish.name), dish]));
 
-    const syncResults = {
-      receipts: 0,
-      products: 0,
-      departments: 0,
-    };
-
-    if (!salesPointIds || salesPointIds.length === 0) {
-      const soldByDept = await client.getSoldByDepartment({
-        datetimeFrom: parseDateParam(fromDate),
-        datetimeTo: parseDateParam(toDate),
-      });
-
-      for (const dept of soldByDept.sold) {
-        await prisma.sale.upsert({
-          where: {
-            externalId_date: {
-              externalId: `cassa_dept_${dept.idDepartment}_${toDate}`,
-              date: new Date(toDate),
-            },
-          },
-          create: {
-            date: new Date(toDate),
-            total: Number(dept.profit),
-            quantity: Number(dept.quantity),
-            type: 'POS',
-            source: 'cassa_in_cloud',
-            externalId: `cassa_dept_${dept.idDepartment}_${toDate}`,
-            metadataJson: JSON.stringify({
-              departmentId: dept.idDepartment,
-              departmentName: dept.department.description,
-            }),
-          },
-          update: {
-            total: Number(dept.profit),
-            quantity: Number(dept.quantity),
-          },
-        });
-        syncResults.departments++;
-      }
-    }
-
-    const soldProducts = await client.getSoldByProduct({
-      datetimeFrom: parseDateParam(fromDate),
-      datetimeTo: parseDateParam(toDate),
-    });
-
-    for (const product of soldProducts.sold) {
-      await prisma.sale.upsert({
-        where: {
-          externalId_date: {
-            externalId: `cassa_prod_${product.idProduct}_${toDate}`,
-            date: new Date(toDate),
-          },
-        },
-        create: {
-          date: new Date(toDate),
-          total: Number(product.profit),
-          quantity: Number(product.quantity),
-          type: 'POS',
-          source: 'cassa_in_cloud',
-          externalId: `cassa_prod_${product.idProduct}_${toDate}`,
-          metadataJson: JSON.stringify({
-            productId: product.idProduct,
-            productName: product.product.description,
-          }),
-        },
-        update: {
-          total: Number(product.profit),
-          quantity: Number(product.quantity),
-        },
-      });
-      syncResults.products++;
-    }
-
-    let receiptsPage = 0;
+    let receiptPage = 0;
     const receiptsLimit = 100;
-    let hasMoreReceipts = true;
+    let importedReceipts = 0;
+    let matchedItems = 0;
+    let unlinkedItems = 0;
+    while (true) {
+      const response = await client.getReceipts({ start: receiptPage * receiptsLimit, limit: receiptsLimit, ...dateParams });
+      if (response.receipts.length === 0) break;
 
-    while (hasMoreReceipts) {
-      const receiptsResponse = await client.getReceipts({
-        start: receiptsPage * receiptsLimit,
-        limit: receiptsLimit,
-        datetimeFrom: parseDateParam(fromDate),
-        datetimeTo: parseDateParam(toDate),
-      });
-
-      if (receiptsResponse.receipts.length === 0) {
-        hasMoreReceipts = false;
-        break;
-      }
-
-      for (const receipt of receiptsResponse.receipts) {
+      for (const receipt of response.receipts) {
+        const receiptAny = receipt as typeof receipt & { taxAmount?: number; paymentMethod?: string; coverCount?: number };
+        const items = receipt.items.map(item => {
+          const dish = dishByName.get(normalized(item.product.description));
+          const explicitVat = Number((item as any).vatRate);
+          const vatKnown = Number.isFinite(explicitVat) && explicitVat >= 0 || Boolean(dish);
+          const totalPrice = Number.isFinite(item.profit) && item.profit > 0 ? item.profit : item.price * item.quantity;
+          if (dish) matchedItems++;
+          else unlinkedItems++;
+          return {
+            productName: item.product.description,
+            quantity: item.quantity,
+            unitPrice: item.price,
+            totalPrice,
+            vatRate: vatKnown ? explicitVat >= 0 ? explicitVat : dish!.vatRate : 10,
+            vatRateKnown: vatKnown,
+            dishId: dish?.id || null,
+          };
+        });
+        const date = new Date(receipt.datetime);
+        const taxAmountKnown = receiptAny.taxAmount != null && Number.isFinite(Number(receiptAny.taxAmount));
         await prisma.sale.upsert({
-          where: {
-            externalId_date: {
-              externalId: `cassa_receipt_${receipt.id}`,
-              date: new Date(receipt.datetime),
-            },
-          },
+          where: { externalId_date: { externalId: `cassa_receipt_${receipt.id}`, date } },
           create: {
-            date: new Date(receipt.datetime),
+            clientId,
+            date,
             total: Number(receipt.total),
-            quantity: 1,
-            type: 'RECEIPT',
-            source: 'cassa_in_cloud',
+            taxAmount: taxAmountKnown ? Number(receiptAny.taxAmount) : 0,
+            taxAmountKnown,
+            coverCount: Number.isInteger(receiptAny.coverCount) ? Number(receiptAny.coverCount) : 1,
+            paymentMethod: receiptAny.paymentMethod || "N/D",
+            type: "RECEIPT",
+            source: "cassa_in_cloud",
             externalId: `cassa_receipt_${receipt.id}`,
-            metadataJson: JSON.stringify({
-              receiptId: receipt.id,
-              receiptNumber: receipt.number,
-              items: receipt.items,
-            }),
+            items: { create: items },
           },
           update: {
             total: Number(receipt.total),
+            taxAmount: taxAmountKnown ? Number(receiptAny.taxAmount) : 0,
+            taxAmountKnown,
+            paymentMethod: receiptAny.paymentMethod || "N/D",
+            items: { deleteMany: {}, create: items },
           },
         });
-        syncResults.receipts++;
+        importedReceipts++;
       }
-
-      if (receiptsResponse.receipts.length < receiptsLimit) {
-        hasMoreReceipts = false;
-      } else {
-        receiptsPage++;
-      }
+      if (response.receipts.length < receiptsLimit) break;
+      receiptPage++;
     }
 
     await prisma.posConfig.upsert({
-      where: { id: 'cassa_in_cloud' },
-      create: {
-        id: 'cassa_in_cloud',
-        name: 'Cassa in Cloud',
-        type: 'cassa_in_cloud',
-        apiKey,
-        isActive: true,
-        lastSync: new Date(),
-      },
-      update: {
-        apiKey,
-        lastSync: new Date(),
-      },
+      where: { id: `cassa_in_cloud_${clientId}` },
+      create: { id: `cassa_in_cloud_${clientId}`, name: "Cassa in Cloud", type: "cassa_in_cloud", apiKey, isActive: true, lastSync: new Date() },
+      update: { apiKey, lastSync: new Date() },
     });
 
     return NextResponse.json({
       success: true,
-      message: 'Sync completed',
-      results: syncResults,
+      message: "Sincronizzazione completata: i corrispettivi vengono registrati una sola volta a livello scontrino.",
+      results: { receipts: importedReceipts, matchedItems, unlinkedItems, aggregateProductRows: productReport.sold.length, aggregateDepartmentRows: departmentReport.sold.length },
     });
   } catch (error) {
-    console.error('Cassa in Cloud sync error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Sync failed' },
-      { status: 500 }
-    );
+    console.error("Cassa in Cloud sync error:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Sync failed" }, { status: 500 });
   }
 }

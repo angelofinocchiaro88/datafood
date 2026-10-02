@@ -38,7 +38,7 @@ type MenuAnalysis = {
   scenario: { targetFoodCostPct: number };
   categories: { id: string; name: string }[];
   thresholds: { averageContribution: number | null; averageUnitsPerMenuItem: number; popularityThreshold: number; popularityFactor: number };
-  summary: { menuItems: number; soldItems: number; classifiedItems: number; unclassifiedItems: number; units: number; netRevenue: number; theoreticalCost: number; contribution: number; unlinkedSalesLines: number; costCoveragePct: number | null };
+  summary: { menuItems: number; soldItems: number; classifiedItems: number; unclassifiedItems: number; units: number; netRevenue: number; unknownVatGross: number; theoreticalCost: number; contribution: number; unlinkedSalesLines: number; costCoveragePct: number | null };
   menu: MenuDish[];
 };
 
@@ -194,12 +194,13 @@ export function MenuEngineering() {
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
 
-      {(data.summary.unlinkedSalesLines > 0 || data.summary.unclassifiedItems > 0) && (
+      {(data.summary.unlinkedSalesLines > 0 || data.summary.unclassifiedItems > 0 || data.summary.unknownVatGross > 0) && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
             {data.summary.unclassifiedItems} piatti sono fuori dalla matrice perché non hanno vendite nel periodo o costi ricetta completi
             {data.summary.unlinkedSalesLines > 0 ? `; inoltre ${data.summary.unlinkedSalesLines} righe vendita non sono collegate a un piatto` : ""}.
+            {data.summary.unknownVatGross > 0 ? ` IVA non verificata su ${euros(data.summary.unknownVatGross)} lordi; le righe non entrano nei ricavi netti.` : ""}
             Collega le vendite e completa le ricette prima di usare i quadranti come decisione.
           </p>
         </div>
@@ -208,7 +209,7 @@ export function MenuEngineering() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metric label="Piatti a menù" value={String(data.summary.menuItems)} detail={`${data.summary.soldItems} con vendite nel periodo`} icon={<Utensils className="h-4 w-4" />} />
         <Metric label="Porzioni vendute" value={data.summary.units.toLocaleString("it-IT", { maximumFractionDigits: 1 })} detail={`soglia popolarità ${data.thresholds.popularityThreshold.toFixed(1)} porzioni`} icon={<TrendingUp className="h-4 w-4" />} />
-        <Metric label="Ricavi menu netti" value={euros(data.summary.netRevenue, 0)} detail="da righe vendita collegate ai piatti" icon={<CircleDollarSign className="h-4 w-4" />} />
+        <Metric label="Ricavi menu netti verificati" value={euros(data.summary.netRevenue, 0)} detail={data.summary.unknownVatGross > 0 ? `IVA da verificare su ${euros(data.summary.unknownVatGross)}` : "da righe vendita collegate ai piatti"} icon={<CircleDollarSign className="h-4 w-4" />} />
         <Metric label="Margine contribuzione" value={euros(data.summary.contribution, 0)} detail={`${data.summary.classifiedItems} piatti classificati`} icon={<Target className="h-4 w-4" />} />
       </div>
 

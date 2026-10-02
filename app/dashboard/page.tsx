@@ -55,8 +55,9 @@ export default function DashboardPage() {
   const laborPct = b.ricavi > 0 ? (b.personale / b.ricavi) * 100 : null;
   const primePct = b.ricavi > 0 ? ((b.tot_materie + b.personale) / b.ricavi) * 100 : null;
   const ebitdaPct = b.ricavi > 0 ? (b.ebitda / b.ricavi) * 100 : null;
-  const scontrino = b.transazioni > 0 ? b.ricavi / b.transazioni : null;
-  const ricavoCoperto = b.coperti > 0 ? b.ricavi / b.coperti : null;
+  const netCoverageComplete = b.coperturaRicaviNettiPct == null || b.coperturaRicaviNettiPct >= 99.99;
+  const scontrino = b.transazioni > 0 && netCoverageComplete ? b.ricavi / b.transazioni : null;
+  const ricavoCoperto = b.coperti > 0 && netCoverageComplete ? b.ricavi / b.coperti : null;
   const chartGranularity = period === "anno" ? "mensile" : period === "trimestre" ? "settimanale" : "giornaliero";
 
   // Alert
@@ -73,6 +74,7 @@ export default function DashboardPage() {
   if (stockAlerts.length > 0) alerts.push({ prio: "at", icon: "▲", title: "Ingredienti sotto scorta minima", desc: `${stockAlerts.length} ingredienti da controllare · ${stockAlerts.slice(0, 3).map((item: any) => item.name).join(", ")}`, href: "/magazzino" });
   if (pendingOrders.length > 0) alerts.push({ prio: "in", icon: "i", title: "Ordini in attesa di ricezione", desc: `${pendingOrders.length} ordini inviati o parzialmente ricevuti`, href: "/ordini" });
   if (b.transazioni === 0) alerts.unshift({ prio: "in", icon: "i", title: "Nessuna vendita registrata nel periodo", desc: `Intervallo ${data.range?.from || ""} – ${data.range?.to || ""}`, href: "/vendite" });
+  if (b.lordoSenzaIVAVerificata > 0) alerts.unshift({ prio: "at", icon: "▲", title: "Ricavi netti incompleti", desc: `${fmt(b.lordoSenzaIVAVerificata)} lordi non riconciliati (IVA o righe)`, href: "/corrispettivi" });
 
   const prioStyle: any = { cr: "border-l-red-500 bg-red-50", at: "border-l-amber-500 bg-amber-50", in: "border-l-blue-500 bg-blue-50" };
 
@@ -117,9 +119,9 @@ export default function DashboardPage() {
 
       {/* KPI PRINCIPALI */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Kpi label="Ricavi del periodo" value={fmt(b.ricavi)} sub={`${b.transazioni.toLocaleString()} transazioni`} note="fonte: vendite" change={data.comparison?.ricavi} color="default" />
+        <Kpi label="Ricavi netti verificati" value={fmt(b.ricavi)} sub={`${b.transazioni.toLocaleString()} transazioni`} note={`${(b.coperturaRicaviNettiPct ?? 0).toFixed(1)}% copertura · lordo totale ${fmt(b.incassiLordi)}`} change={data.comparison?.ricavi} color="default" />
         <Kpi label="EBITDA stimato" value={fmt(b.ebitda)} sub={`margine ${pct(ebitdaPct)}`} note="stima, non consuntivo" title={data.estimateNotes?.ebitda} change={data.comparison?.ebitda} color={b.ebitda >= 0 ? "green" : "red"} />
-        <Kpi label="Liquidità" value={fmt(data.liquidita)} sub="conti collegati" note={data.accountsCount < 2 ? "parziale" : "completa"} color="default" />
+        <Kpi label="Liquidità" value={fmt(data.liquidita)} sub={`${data.accountsCount} conti attivi`} note={data.accountsCount === 0 ? "nessun conto" : data.confirmedAccountsCount === data.accountsCount ? "saldi verificati" : "saldi parziali/non confermati"} color="default" />
         <Kpi label="Saldo tra 13 sett." value={saldo13 !== null ? fmt(saldo13) : "N/D"} sub={minSaldo !== null ? `min ${fmt(minSaldo)} · ${settimaneRischio} rischi` : ""} note="forecast" color={settimaneRischio > 0 ? "amber" : "green"} />
       </div>
 

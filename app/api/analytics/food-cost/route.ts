@@ -6,12 +6,15 @@ import { calcRicavoNettoRiga } from "@/lib/metrics";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const recentStart = new Date();
+  recentStart.setDate(recentStart.getDate() - 29);
   const [dishes, dailySummaries] = await Promise.all([
     prisma.dish.findMany({
-      include: { category: true, recipes: { include: { ingredient: true } }, saleItems: true },
+      where: { clientId: "default" },
+      include: { category: true, recipes: { include: { ingredient: true } }, saleItems: { include: { sale: true } } },
       orderBy: { name: "asc" },
     }),
-    prisma.dailySummary.findMany({ orderBy: { date: "desc" }, take: 30 }),
+    prisma.sale.findMany({ where: { clientId: "default", type: { not: "POS" }, date: { gte: recentStart } }, include: { items: true }, orderBy: { date: "desc" } }),
   ]);
 
   let totalRevenue = 0;
@@ -20,8 +23,9 @@ export async function GET() {
 
   const dishAnalysis = dishes.map(dish => {
     const recipeCost = calculateRecipeCost(dish);
-    const revenue = dish.saleItems.reduce((sum, item) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
-    const quantity = dish.saleItems.reduce((sum, item) => sum + item.quantity, 0);
+    const inPeriodItems = dish.saleItems.filter(item => item.sale.date >= recentStart && item.sale.clientId === "default" && item.vatRateKnown !== false);
+    const revenue = inPeriodItems.reduce((sum, item) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
+    const quantity = inPeriodItems.reduce((sum, item) => sum + item.quantity, 0);
     const netPrice = getNetSellingPrice(dish.price, dish.vatRate);
     const foodCostPct = getFoodCostPct(recipeCost.costPerPortion, dish.price, dish.vatRate);
     const margin = getContributionMargin(recipeCost.costPerPortion, dish.price, dish.vatRate);
@@ -63,6 +67,6 @@ export async function GET() {
     costCoveragePct,
     uncostedDishes: dishAnalysis.filter(dish => !dish.recipeComplete).length,
     dishAnalysis: dishAnalysis.sort((a, b) => b.revenue - a.revenue),
-    trend: dailySummaries.slice(0, 14),
+    trend: dailySummaries.map(sale => ({ date: sale.date, totalRevenue: sale.items.filter(item => item.vatRateKnown !== false).reduce((sum, item) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0), coverCount: sale.coverCount, transactionCount: 1 })),
   });
 }

@@ -43,13 +43,16 @@ export default function RevenueManagementPage() {
   const [priceIncreasePct, setPriceIncreasePct] = useState(5);
   const [fixedCosts, setFixedCosts] = useState("");
   const [search, setSearch] = useState("");
+  const [clientId, setClientId] = useState("default");
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  useEffect(() => { setClientId(localStorage.getItem("df_clientId") || "default"); }, []);
+
   useEffect(() => {
     if (period === "custom" && (!from || !to || from > to)) { setLoading(false); setError("Intervallo date non valido."); return; }
-    const params = new URLSearchParams({ period, categoryId, priceIncreasePct: String(priceIncreasePct) });
+    const params = new URLSearchParams({ period, categoryId, priceIncreasePct: String(priceIncreasePct), clientId });
     if (period === "custom") { params.set("from", from); params.set("to", to); }
     const controller = new AbortController();
     setLoading(true);
@@ -59,7 +62,7 @@ export default function RevenueManagementPage() {
       .catch(reason => { if (reason.name !== "AbortError") setError(reason.message || "Errore di caricamento"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [period, from, to, categoryId, priceIncreasePct]);
+  }, [period, from, to, categoryId, priceIncreasePct, clientId]);
 
   const filteredDishes = useMemo(() => (data?.summary.dishes || []).filter((dish: any) => !search || `${dish.name} ${dish.category}`.toLocaleLowerCase("it-IT").includes(search.toLocaleLowerCase("it-IT"))), [data, search]);
   const scenario = data?.priceScenario || [];
@@ -104,10 +107,11 @@ export default function RevenueManagementPage() {
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0"/><p>{data.summary.unlinkedLines > 0 ? `${data.summary.unlinkedLines} righe vendita non associate a un piatto. ` : ""}{data.summary.missingRecipeLines > 0 ? `${data.summary.missingRecipeLines} righe vendute senza costo ricetta completo. ` : ""}{data.summary.receipts > 0 && !timeDataAdequate ? "Le vendite non hanno un orario affidabile: l’analisi per fascia oraria è incompleta." : ""}</p></div>
       )}
 
-      {data.summary.revenue === 0 && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"><strong>Nessun ricavo registrato nel periodo selezionato.</strong><p className="mt-1 text-sky-800">L’analisi non stima domanda o fasce orarie da dati assenti. Importa le vendite con date, orari e righe prodotto.</p><Link href="/vendite" className="mt-2 inline-flex font-semibold text-sky-800 underline">Vai a Vendite</Link></div>}
+      {data.summary.unverifiedReceipts > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><strong>Incassi senza IVA verificata:</strong> {money(data.summary.unknownNetGross)} lordi su {data.summary.unverifiedReceipts} corrispettivi non sono conteggiati nei ricavi netti né nelle simulazioni di margine. Completa imposta o righe in <Link href="/corrispettivi" className="font-semibold underline">Corrispettivi</Link>. Copertura netta: {pct(data.summary.netRevenueCoveragePct)}.</div>}
+      {data.summary.receipts === 0 && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"><strong>Nessun ricavo registrato nel periodo selezionato.</strong><p className="mt-1 text-sky-800">L’analisi non stima domanda o fasce orarie da dati assenti. Importa le vendite con date, orari e righe prodotto.</p><Link href="/vendite" className="mt-2 inline-flex font-semibold text-sky-800 underline">Vai a Vendite</Link></div>}
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Metric label="Ricavi netti" value={money(data.summary.revenue)} detail={`${data.summary.receipts} scontrini nel filtro`} change={data.comparison.revenue} icon={<CircleDollarSign className="h-4 w-4"/>}/>
+        <Metric label="Ricavi netti verificati" value={money(data.summary.revenue)} detail={`${data.summary.receipts} scontrini · copertura ${pct(data.summary.netRevenueCoveragePct)}`} change={data.comparison.revenue} icon={<CircleDollarSign className="h-4 w-4"/>}/>
         <Metric label="Ricavo medio per scontrino" value={money(data.summary.averageCheck, 2)} detail={categoryIdIsFiltered ? "scontrini con almeno una riga nella sezione" : "POS · ricavi netti / scontrini"} change={data.comparison.averageCheck} icon={<Receipt className="h-4 w-4"/>}/>
         <Metric label="Ricavo per coperto" value={categoryIdIsFiltered ? "N/D" : money(data.summary.revenuePerCover, 2)} detail={categoryIdIsFiltered ? "i coperti non sono ripartiti per categoria" : "ricavi POS / coperti"} icon={<UtensilsCrossed className="h-4 w-4"/>}/>
         <Metric label="Margine contribuzione" value={money(data.summary.contribution)} detail={`${pct(data.summary.contributionPct)} sui ricavi con costo valido`} change={data.comparison.contribution} icon={<TrendingUp className="h-4 w-4"/>} warning={data.summary.costCoveragePct != null && data.summary.costCoveragePct < 99.99}/>

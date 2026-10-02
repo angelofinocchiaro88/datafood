@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getClientId } from "@/components/layout/ClientSelector";
 import { Card, CardHeader, CardTitle, CardContent, Button, Input, Badge } from "@/components/ui";
 import { Save, User, Bell, Database, Link, RefreshCw, MessageSquare, Settings, History, Trash2, Bot, CheckCircle2, XCircle, Download, Mail } from "lucide-react";
 
@@ -95,7 +96,7 @@ export default function SettingsPage() {
       const res = await fetch("/api/cassa/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: cassaApiKey }),
+        body: JSON.stringify({ apiKey: cassaApiKey, clientId: getClientId() }),
       });
       const data = await res.json();
       if (data.success) setLastSync(new Date().toLocaleString());

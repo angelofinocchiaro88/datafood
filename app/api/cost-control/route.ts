@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { calcolaCostoPersona } from "@/lib/payroll";
 import { calculateRecipeCost } from "@/lib/recipe-cost";
 import { calcRicavoNettoRiga, calcVariazione } from "@/lib/metrics";
+import { calculateSaleFinancials } from "@/lib/sale-financials";
+import { totalCashPosition } from "@/lib/cash-position";
 
 export const dynamic = "force-dynamic";
 
@@ -101,7 +103,7 @@ function getMonthSegments(range: DateRange): MonthSegment[] {
 
 function sumSales(sales: any[]) {
   let revenue = 0, foodRevenue = 0, beverageRevenue = 0, foodCost = 0, beverageCost = 0, linkedCostRevenue = 0;
-  let covers = 0, linkedSaleLines = 0, unlinkedSaleLines = 0, unlinkedRevenue = 0, missingRecipeLines = 0, receiptsWithoutLines = 0;
+  let covers = 0, linkedSaleLines = 0, unlinkedSaleLines = 0, unlinkedRevenue = 0, unknownNetGross = 0, unverifiedVatLines = 0, missingRecipeLines = 0, receiptsWithoutLines = 0;
   const byCategory = new Map<string, { category: string; revenue: number; cost: number; quantity: number }>();
   const byDish = new Map<string, { id: string; name: string; category: string; revenue: number; cost: number; quantity: number; complete: boolean }>();
   const trend = new Map<string, { month: string; revenue: number; covers: number; receipts: number; foodRevenue: number; beverageRevenue: number; foodCost: number; beverageCost: number; foodCostedRevenue: number; beverageCostedRevenue: number }>();
@@ -112,16 +114,21 @@ function sumSales(sales: any[]) {
     const monthRow = trend.get(monthKey) || { month: monthKey, revenue: 0, covers: 0, receipts: 0, foodRevenue: 0, beverageRevenue: 0, foodCost: 0, beverageCost: 0, foodCostedRevenue: 0, beverageCostedRevenue: 0 };
     monthRow.covers += sale.coverCount;
     monthRow.receipts++;
+    if (sale.items.length > 0) unknownNetGross += Math.abs(sale.total - sale.items.reduce((sum: number, item: any) => sum + item.totalPrice, 0));
 
     if (sale.items.length === 0) {
       receiptsWithoutLines++;
-      const fallbackRevenue = Math.max(0, sale.total - sale.taxAmount);
-      revenue += fallbackRevenue;
-      unlinkedRevenue += fallbackRevenue;
-      monthRow.revenue += fallbackRevenue;
+      const financials = calculateSaleFinancials(sale);
+      if (financials.netRevenue == null) unknownNetGross += financials.grossRevenue;
+      else {
+        revenue += financials.netRevenue;
+        unlinkedRevenue += financials.netRevenue;
+        monthRow.revenue += financials.netRevenue;
+      }
     }
 
     for (const item of sale.items) {
+      if (item.vatRateKnown === false) { unknownNetGross += item.totalPrice; unverifiedVatLines++; continue; }
       const netRevenue = calcRicavoNettoRiga(item.totalPrice, item.vatRate);
       revenue += netRevenue;
       monthRow.revenue += netRevenue;
@@ -167,8 +174,8 @@ function sumSales(sales: any[]) {
   const costedBeverageSales = Array.from(byDish.values()).filter(dish => dish.complete && dish.category.toLocaleLowerCase("it-IT") === "bevande").reduce((sum, dish) => sum + dish.revenue, 0);
 
   return {
-    revenue, foodRevenue, beverageRevenue, foodCost, beverageCost, covers, receipts: sales.length,
-    linkedSaleLines, unlinkedSaleLines, unlinkedRevenue, receiptsWithoutLines, missingRecipeLines, linkedCostRevenue, costCoveragePct,
+    revenue, grossRevenue: sales.reduce((sum, sale) => sum + sale.total, 0), unknownNetGross, foodRevenue, beverageRevenue, foodCost, beverageCost, covers, receipts: sales.length,
+    linkedSaleLines, unlinkedSaleLines, unlinkedRevenue, receiptsWithoutLines, unverifiedVatLines, missingRecipeLines, linkedCostRevenue, costCoveragePct,
     foodCostPct: costedFoodSales > 0 ? foodCost / costedFoodSales * 100 : null,
     beverageCostPct: costedBeverageSales > 0 ? beverageCost / costedBeverageSales * 100 : null,
     foodCostedRevenue: costedFoodSales, beverageCostedRevenue: costedBeverageSales,
@@ -344,9 +351,9 @@ export async function GET(request: NextRequest) {
   const endYear = queryEnd.getFullYear();
   const salesInclude = { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } };
 
-  const [currentSales, previousSales, currentIssuedInvoices, previousIssuedInvoices, invoices, buste, employees, assets, schedules, cashTx, budgetTargets, client] = await Promise.all([
-    prisma.sale.findMany({ where: { clientId: "default", date: { gte: range.start, lt: range.end } }, include: salesInclude }),
-    prisma.sale.findMany({ where: { clientId: "default", date: { gte: previousRange.start, lt: previousRange.end } }, include: salesInclude }),
+  const [currentSales, previousSales, currentIssuedInvoices, previousIssuedInvoices, invoices, buste, employees, assets, schedules, cashTx, accounts, budgetTargets, client] = await Promise.all([
+    prisma.sale.findMany({ where: { clientId: "default", type: { not: "POS" }, date: { gte: range.start, lt: range.end } }, include: salesInclude }),
+    prisma.sale.findMany({ where: { clientId: "default", type: { not: "POS" }, date: { gte: previousRange.start, lt: previousRange.end } }, include: salesInclude }),
     prisma.fatturaEmessa.findMany({ where: { clientId: "default", data: { gte: range.start, lt: range.end }, stato: { not: "ANNULLATA" } } }),
     prisma.fatturaEmessa.findMany({ where: { clientId: "default", data: { gte: previousRange.start, lt: previousRange.end }, stato: { not: "ANNULLATA" } } }),
     prisma.invoice.findMany({
@@ -358,7 +365,8 @@ export async function GET(request: NextRequest) {
     prisma.dipendente.findMany({ where: { clientId: "default" }, include: { contratti: true } }),
     prisma.asset.findMany({ where: { clientId: "default", stato: "attivo" } }),
     prisma.paymentSchedule.findMany({ where: { clientId: "default", status: "open", dueDate: { gte: new Date() } }, orderBy: { dueDate: "asc" }, take: 12 }),
-    prisma.cashTransaction.findMany({ where: { clientId: "default" } }),
+    prisma.cashTransaction.findMany({ where: { clientId: "default" }, select: { accountId: true, date: true, amount: true } }),
+    prisma.account.findMany({ where: { clientId: "default", status: "active" }, select: { id: true, openingBalance: true, openingBalanceDate: true, openingBalanceConfirmed: true } }),
     prisma.budgetTarget.findMany({ where: { clientId: "default", year: { gte: startYear, lte: endYear } } }),
     prisma.client.findFirst({ where: { id: "default" } }),
   ]);
@@ -385,7 +393,7 @@ export async function GET(request: NextRequest) {
   const previousCostsKnown = previousSalesSummary.foodCost + previousSalesSummary.beverageCost + previousPayroll.total + previousInvoiceSummary.personnelInvoices + previousInvoiceSummary.otherCosts;
   const previousHasFinancialData = previousTotalRevenue > 0 || previousInvoiceSummary.count > 0 || previousPayroll.total > 0;
   const previousEbitdaEstimate = previousHasFinancialData ? previousTotalRevenue - previousCostsKnown : null;
-  const liquidita = cashTx.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const liquidita = totalCashPosition(accounts, cashTx);
   const schedules30 = schedules.filter(schedule => schedule.dueDate <= new Date(Date.now() + 30 * 86400000));
   const outflows30 = schedules30.filter(schedule => schedule.type === "payment").reduce((sum, schedule) => sum + schedule.amount, 0);
   const inflows30 = schedules30.filter(schedule => schedule.type === "income").reduce((sum, schedule) => sum + schedule.amount, 0);
@@ -433,6 +441,7 @@ export async function GET(request: NextRequest) {
 
   const alerts = [];
   if (sales.receipts === 0) alerts.push({ level: "info", code: "no-sales", title: "Nessun corrispettivo POS nel periodo", detail: "Verifica l’intervallo o importa i corrispettivi con gli articoli venduti.", href: "/vendite" });
+  if (sales.unknownNetGross > 0) alerts.push({ level: "warning", code: "unknown-sales-tax", title: "Incassi POS da riconciliare", detail: `${Math.round(sales.unknownNetGross).toLocaleString("it-IT")} € lordi non sono inclusi nei ricavi netti; verifica IVA e quadratura delle righe.`, href: "/corrispettivi" });
   if (sales.receiptsWithoutLines > 0 || sales.unlinkedSaleLines > 0) alerts.push({ level: "warning", code: "unlinked-sales", title: "Vendite non collegate ai piatti", detail: `${sales.receiptsWithoutLines} scontrini senza righe e ${sales.unlinkedSaleLines} righe senza piatto.`, href: "/vendite" });
   if (sales.missingRecipeLines > 0) alerts.push({ level: "warning", code: "missing-recipes", title: "Food Cost teorico incompleto", detail: `${sales.missingRecipeLines} righe vendute senza scheda costo valida (${sales.costCoveragePct == null ? "0" : sales.costCoveragePct.toFixed(1)}% copertura).`, href: "/food-cost" });
   if (invoiceSummary.count === 0) alerts.push({ level: "info", code: "no-invoices", title: "Costi da fatture non disponibili", detail: "Il risultato operativo non include costi di gestione registrati nel periodo.", href: "/accounting" });
@@ -442,7 +451,7 @@ export async function GET(request: NextRequest) {
   if (budget.foodCostPct != null && sales.foodCostPct != null && sales.foodCostPct > budget.foodCostPct) alerts.push({ level: "warning", code: "food-cost-target", title: "Food Cost sopra budget", detail: `${sales.foodCostPct.toFixed(1)}% consuntivo teorico vs ${budget.foodCostPct.toFixed(1)}% target.`, href: "/food-cost" });
   if (liquidita < outflows30 - inflows30) alerts.push({ level: "critical", code: "cash-gap", title: "Copertura scadenze a 30 giorni insufficiente", detail: `Liquidità ${Math.round(liquidita).toLocaleString("it-IT")} € · saldo scadenze ${Math.round(inflows30 - outflows30).toLocaleString("it-IT")} €.`, href: "/cash-flow" });
 
-  const recipeCoverageComplete = totalRevenue === 0 || (issuedRevenue === 0 && sales.costCoveragePct != null && sales.costCoveragePct >= 99.99);
+  const recipeCoverageComplete = totalRevenue === 0 || (issuedRevenue === 0 && sales.unknownNetGross === 0 && sales.costCoveragePct != null && sales.costCoveragePct >= 99.99);
   const invoiceCoverageComplete = invoiceSummary.count > 0 && invoiceSummary.unclassifiedCount === 0;
   const ebitdaQuality = !hasFinancialData ? "non_disponibile" : recipeCoverageComplete && invoiceCoverageComplete && payroll.source === "consuntivo" ? "completo" : "parziale";
 
@@ -477,10 +486,10 @@ export async function GET(request: NextRequest) {
       financialCosts: invoiceSummary.financialCosts,
       resultBeforeTaxEstimate,
       netIncomeEstimate: null,
-      averageCheck: sales.receipts > 0 ? sales.revenue / sales.receipts : null,
-      revenuePerCover: sales.covers > 0 ? sales.revenue / sales.covers : null,
-      theoreticalCostPerCover: sales.covers > 0 ? (sales.foodCost + sales.beverageCost) / sales.covers : null,
-      costPerFirstCover: sales.covers > 0 ? (sales.foodCost + sales.beverageCost + payroll.total) / sales.covers : null,
+       averageCheck: sales.receipts > 0 && sales.unknownNetGross === 0 ? sales.revenue / sales.receipts : null,
+       revenuePerCover: sales.covers > 0 && sales.unknownNetGross === 0 ? sales.revenue / sales.covers : null,
+       theoreticalCostPerCover: sales.covers > 0 && sales.unknownNetGross === 0 ? (sales.foodCost + sales.beverageCost) / sales.covers : null,
+       costPerFirstCover: sales.covers > 0 && sales.unknownNetGross === 0 ? (sales.foodCost + sales.beverageCost + payroll.total) / sales.covers : null,
       receipts: sales.receipts,
       covers: sales.covers,
       menuItemsWithoutCost: sales.missingRecipeLines,
@@ -510,7 +519,7 @@ export async function GET(request: NextRequest) {
     budget,
     budgetVariance: { revenue: budgetRevenueVariance, foodCostPct: foodTargetVariance, laborPct: laborTargetVariance },
     sources: {
-      sales: { receipts: sales.receipts, linkedLines: sales.linkedSaleLines, unlinkedReceipts: sales.receiptsWithoutLines, unlinkedSaleLines: sales.unlinkedSaleLines, netRevenue: sales.revenue, issuedRevenue, netRevenueCoveragePct: sales.revenue > 0 ? Math.max(0, (sales.revenue - sales.unlinkedRevenue) / sales.revenue * 100) : null },
+      sales: { receipts: sales.receipts, linkedLines: sales.linkedSaleLines, unlinkedReceipts: sales.receiptsWithoutLines, unlinkedSaleLines: sales.unlinkedSaleLines, netRevenue: sales.revenue, grossRevenue: sales.grossRevenue, unknownNetGross: sales.unknownNetGross, issuedRevenue, netRevenueCoveragePct: sales.grossRevenue > 0 ? Math.min(100, Math.max(0, (sales.grossRevenue - sales.unknownNetGross) / sales.grossRevenue * 100)) : null, linkedRevenueCoveragePct: sales.revenue > 0 ? Math.min(100, Math.max(0, (sales.revenue - sales.unlinkedRevenue) / sales.revenue * 100)) : null },
       recipeCosts: { costCoveragePct: sales.costCoveragePct, missingLines: sales.missingRecipeLines, basis: "Costo teorico da ricetta × porzioni vendute" },
       invoices: { approved: invoiceSummary.count, classified: invoiceSummary.classifiedCount, unclassified: invoiceSummary.unclassifiedCount, classificationCoveragePct: invoiceSummary.count > 0 ? invoiceSummary.classifiedCount / invoiceSummary.count * 100 : null },
       payroll: { source: payroll.source, slipsCount: payroll.slipsCount, actualMonths: payroll.actualMonths, estimatedMonths: payroll.estimatedMonths, missingMonths: payroll.unknownMonths, months: payroll.months },

@@ -116,23 +116,6 @@ export async function PUT(request: NextRequest) {
         const newStatus = complete ? "RECEIVED" : "PARTIAL";
         await tx.order.update({ where: { id }, data: { status: newStatus } });
 
-        if (complete) {
-          await tx.invoice.create({
-            data: {
-              invoiceNumber: `ORD-${order.id.slice(-4)}`,
-              invoiceDate: receivedAt,
-              senderName: order.supplier.name,
-              senderVat: order.supplier.vat || "",
-              recipientVat: "",
-              recipientName: "",
-              totalAmount: order.total,
-              taxAmount: order.total * 0.22,
-              status: "PENDING",
-              supplierId: order.supplierId,
-            },
-          });
-        }
-
         return { status: newStatus, alreadyReceived: false };
       });
 
@@ -141,7 +124,7 @@ export async function PUT(request: NextRequest) {
         success: true,
         status: result.status,
         message: result.status === "RECEIVED"
-          ? "Ricezione completata: magazzino aggiornato e fattura creata in Accounting"
+          ? "Ricezione completata: magazzino aggiornato. Registra o collega la fattura reale in Accounting."
           : "Ricezione parziale registrata: quantità e magazzino aggiornati",
       });
     } catch (error) {

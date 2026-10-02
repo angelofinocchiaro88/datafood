@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { calculateRecipeCost, getContributionMargin, getNetSellingPrice } from "@/lib/recipe-cost";
 import { calcRicavoNettoRiga, calcVariazione } from "@/lib/metrics";
+import { calculateSaleFinancials } from "@/lib/sale-financials";
 
 export const dynamic = "force-dynamic";
 
@@ -86,8 +87,8 @@ function summarizeSales(sales: any[], dishes: any[], categoryId: string) {
   const dayparts = new Map<string, any>(DAYPARTS.map(part => [part.key, { key: part.key, label: part.label, revenue: 0, contribution: 0, covers: 0, receipts: 0, units: 0 }]));
   const weekdays = new Map<number, any>(WEEKDAYS.map((label, day) => [day, { day, label, revenue: 0, covers: 0, receipts: 0, contribution: 0 }]));
   const monthly = new Map<string, any>();
-  let revenue = 0, foodRevenue = 0, beverageRevenue = 0, cogs = 0, costedRevenue = 0, contribution = 0, covers = 0, receipts = 0;
-  let linkedLines = 0, unlinkedLines = 0, missingRecipeLines = 0, timedReceipts = 0, fallbackReceipts = 0;
+  let revenue = 0, grossRevenue = 0, unknownNetGross = 0, unverifiedReceipts = 0, foodRevenue = 0, beverageRevenue = 0, cogs = 0, costedRevenue = 0, contribution = 0, covers = 0, receipts = 0;
+  let linkedLines = 0, unlinkedLines = 0, missingRecipeLines = 0, unverifiedVatLines = 0, timedReceipts = 0, fallbackReceipts = 0;
 
   for (const dish of dishes) {
     dishData.set(dish.id, {
@@ -115,10 +116,28 @@ function summarizeSales(sales: any[], dishes: any[], categoryId: string) {
     const isWholeMenu = categoryId === "all";
     if (inScope.length === 0 && sale.items.length > 0) continue;
 
-    const lineRevenue = inScope.reduce((sum: number, item: any) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
-    const fallbackRevenue = isWholeMenu && sale.items.length === 0 ? Math.max(0, sale.total - sale.taxAmount) : 0;
+    const lineRevenue = inScope.filter((item: any) => item.vatRateKnown !== false).reduce((sum: number, item: any) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
+    const headerFinancials = calculateSaleFinancials(sale);
+    if (isWholeMenu && headerFinancials.reconciliationDelta != null) unknownNetGross += Math.abs(headerFinancials.reconciliationDelta);
+    const fallbackRevenue = isWholeMenu && sale.items.length === 0 ? headerFinancials.netRevenue || 0 : 0;
     const receiptRevenue = lineRevenue + fallbackRevenue;
-    if (receiptRevenue <= 0 && inScope.length === 0) continue;
+    const receiptGross = isWholeMenu ? sale.total : inScope.reduce((sum: number, item: any) => sum + item.totalPrice, 0);
+    if (isWholeMenu && sale.items.length === 0 && headerFinancials.netRevenue == null) {
+      unknownNetGross += sale.total;
+      unverifiedReceipts++;
+    }
+    const unknownVatLines = inScope.filter((item: any) => item.vatRateKnown === false);
+    if (unknownVatLines.length > 0) {
+      unknownNetGross += unknownVatLines.reduce((sum: number, item: any) => sum + item.totalPrice, 0);
+      unverifiedVatLines += unknownVatLines.length;
+      unverifiedReceipts++;
+    }
+    if (isWholeMenu && headerFinancials.reconciliationDelta != null && Math.abs(headerFinancials.reconciliationDelta) > 0.01) {
+      unknownNetGross += Math.abs(headerFinancials.reconciliationDelta);
+      if (unknownVatLines.length === 0 && !(sale.items.length === 0 && headerFinancials.netRevenue == null)) unverifiedReceipts++;
+    }
+    if (receiptGross <= 0 && inScope.length === 0) continue;
+    grossRevenue += receiptGross;
     revenue += receiptRevenue;
     receipts++;
     if (isWholeMenu) covers += sale.coverCount;
@@ -149,6 +168,11 @@ function summarizeSales(sales: any[], dishes: any[], categoryId: string) {
     for (const item of matchedItems) {
       linkedLines++;
       const dish = dishData.get(item.dishId)!;
+      if (item.vatRateKnown === false) {
+        dish.units += item.quantity;
+        dish.grossRevenue += item.totalPrice;
+        continue;
+      }
       const netLineRevenue = calcRicavoNettoRiga(item.totalPrice, item.vatRate);
       const unitNetPrice = item.quantity > 0 ? netLineRevenue / item.quantity : 0;
       const actualVat = Number.isFinite(item.vatRate) && item.vatRate >= 0 ? item.vatRate : dish.vatRate;
@@ -204,6 +228,11 @@ function summarizeSales(sales: any[], dishes: any[], categoryId: string) {
 
   return {
     revenue: relevantRevenue,
+    grossRevenue,
+    unknownNetGross,
+    unverifiedReceipts,
+    unverifiedVatLines,
+    netRevenueCoveragePct: grossRevenue > 0 ? Math.min(100, Math.max(0, (grossRevenue - unknownNetGross) / grossRevenue * 100)) : null,
     linkedRevenue: dishRows.reduce((sum, dish) => sum + dish.revenue, 0),
     foodRevenue,
     beverageRevenue,
@@ -219,8 +248,8 @@ function summarizeSales(sales: any[], dishes: any[], categoryId: string) {
     timestampCoveragePct: receipts > 0 ? timedReceipts / receipts * 100 : null,
     unlinkedLines,
     missingRecipeLines,
-    averageCheck: receipts > 0 ? relevantRevenue / receipts : null,
-    revenuePerCover: categoryId === "all" && covers > 0 ? relevantRevenue / covers : null,
+    averageCheck: receipts > 0 && unknownNetGross === 0 ? relevantRevenue / receipts : null,
+    revenuePerCover: categoryId === "all" && covers > 0 && unknownNetGross === 0 ? relevantRevenue / covers : null,
     cogsPerCover: categoryId === "all" && covers > 0 ? cogs / covers : null,
     categories: categoryRows,
     dishes: dishRows.sort((a, b) => b.contribution - a.contribution),
@@ -236,11 +265,12 @@ export async function GET(request: NextRequest) {
   if (!range) return NextResponse.json({ error: "Periodo non valido" }, { status: 400 });
   const previousRange = getPreviousRange(range);
   const categoryId = request.nextUrl.searchParams.get("categoryId") || "all";
+  const clientId = request.nextUrl.searchParams.get("clientId") || "default";
 
   const [dishes, currentSales, previousSales] = await Promise.all([
-    prisma.dish.findMany({ where: { clientId: "default" }, include: { category: true, recipes: { include: { ingredient: true } } }, orderBy: [{ category: { name: "asc" } }, { name: "asc" }] }),
-    prisma.sale.findMany({ where: { clientId: "default", date: { gte: range.start, lt: range.end } }, include: { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } } }),
-    prisma.sale.findMany({ where: { clientId: "default", date: { gte: previousRange.start, lt: previousRange.end } }, include: { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } } }),
+    prisma.dish.findMany({ where: { clientId }, include: { category: true, recipes: { include: { ingredient: true } } }, orderBy: [{ category: { name: "asc" } }, { name: "asc" }] }),
+    prisma.sale.findMany({ where: { clientId, type: { not: "POS" }, date: { gte: range.start, lt: range.end } }, include: { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } } }),
+    prisma.sale.findMany({ where: { clientId, type: { not: "POS" }, date: { gte: previousRange.start, lt: previousRange.end } }, include: { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } } }),
   ]);
 
   const scopedDishes = categoryId === "all" ? dishes : dishes.filter(dish => dish.categoryId === categoryId);
@@ -284,6 +314,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     period: { key: range.key, label: range.label, from: dateKey(range.start), to: dateKey(addDays(range.end, -1)) },
+    clientId,
     comparisonRange: { from: dateKey(previousRange.start), to: dateKey(addDays(previousRange.end, -1)) },
     categoryId,
     scenarioPriceIncreasePct: safePriceIncreasePct,

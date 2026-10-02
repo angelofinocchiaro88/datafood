@@ -151,6 +151,7 @@ model Sale {
   date            DateTime      @default(now())
   total           Float
   taxAmount       Float         @default(0)
+  taxAmountKnown  Boolean       @default(false)
   paymentMethod   String        @default("CASH")
   coverCount      Int           @default(1)
   posId           String?
@@ -176,6 +177,7 @@ model SaleItem {
   unitPrice   Float
   totalPrice  Float
   vatRate     Float   @default(10)
+  vatRateKnown Boolean @default(true)
   dishId      String?
   dish        Dish?   @relation(fields: [dishId], references: [id])
   saleId      String

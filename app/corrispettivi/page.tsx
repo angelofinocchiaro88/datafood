@@ -3,16 +3,20 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Upload, FileText, Plus, Calendar, Search, TrendingUp, Download, ClipboardPaste, Database, ArrowRight, CheckCircle2 } from "lucide-react";
+import { getClientId } from "@/components/layout/ClientSelector";
 
 export default function CorrispettiviPage() {
   const [tab, setTab] = useState<"import" | "storico" | "manuale">("import");
   const [sales, setSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  const [taxEditId, setTaxEditId] = useState<string | null>(null);
+  const [taxEditAmount, setTaxEditAmount] = useState("");
 
   // Manual entry
   const [manualDate, setManualDate] = useState(new Date().toISOString().split("T")[0]);
   const [manualTotal, setManualTotal] = useState("");
+  const [manualTax, setManualTax] = useState("");
   const [manualCovers, setManualCovers] = useState("");
   const [manualPayment, setManualPayment] = useState("CASH");
 
@@ -24,53 +28,80 @@ export default function CorrispettiviPage() {
   const loadSales = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/sales?limit=100");
+      const res = await fetch(`/api/sales?limit=100&clientId=${encodeURIComponent(getClientId())}`);
       const data = await res.json();
-      setSales(data.sales || []);
-    } catch {}
+      setSales(Array.isArray(data) ? data : data.sales || []);
+    } catch { setMsg("Errore nel caricamento dei corrispettivi."); }
     setLoading(false);
   };
 
   const handleManualAdd = async () => {
     if (!manualTotal) return;
-    await fetch("/api/sales", {
+    const response = await fetch("/api/sales", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        clientId: getClientId(),
         date: manualDate,
         total: parseFloat(manualTotal),
+        ...(manualTax !== "" ? { taxAmount: parseFloat(manualTax) } : {}),
         coverCount: manualCovers ? parseInt(manualCovers) : 1,
         paymentMethod: manualPayment,
         type: "MANUAL",
         source: "corrispettivi_manuale",
       }),
     });
+    if (!response.ok) { const result = await response.json(); setMsg(`Errore: ${result.error || "corrispettivo non registrato"}`); return; }
     setMsg("✅ Corrispettivo registrato");
-    setManualTotal(""); setManualCovers("");
+    setManualTotal(""); setManualTax(""); setManualCovers("");
     loadSales();
+  };
+
+  const saveExistingTax = async (saleId: string) => {
+    const taxAmount = Number(taxEditAmount);
+    if (!Number.isFinite(taxAmount) || taxAmount < 0) { setMsg("Inserisci un importo IVA valido."); return; }
+    const response = await fetch(`/api/sales/${saleId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: getClientId(), taxAmount }) });
+    const result = await response.json();
+    if (!response.ok) { setMsg(`Errore: ${result.error || "IVA non aggiornata"}`); return; }
+    setTaxEditId(null);
+    setTaxEditAmount("");
+    setMsg("IVA verificata: il corrispettivo ora contribuisce ai ricavi netti.");
+    await loadSales();
   };
 
   const handleCsvPaste = async () => {
     if (!csvText.trim()) return;
-    const lines = csvText.trim().split("\n");
+    const lines = csvText.trim().split(/\r?\n/);
     let count = 0;
+    const errors: string[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(/[,;\t]/);
+      const delimiter = lines[i].includes(";") ? ";" : lines[i].includes("\t") ? "\t" : ",";
+      const cols = lines[i].split(delimiter).map(value => value.trim().replace(/^"|"$/g, ""));
       if (cols.length < 2) continue;
       const date = cols[0]?.trim();
-      const total = parseFloat(cols[1]?.replace(",", ".").replace("€", "").trim());
+      const parseAmount = (value?: string) => {
+        if (!value) return NaN;
+        let normalized = value.replace(/[\s€]/g, "");
+        if (normalized.includes(",") && normalized.includes(".")) normalized = normalized.lastIndexOf(",") > normalized.lastIndexOf(".") ? normalized.replace(/\./g, "").replace(",", ".") : normalized.replace(/,/g, "");
+        else normalized = normalized.replace(",", ".");
+        return Number(normalized);
+      };
+      const total = parseAmount(cols[1]);
       const covers = cols[2] ? parseInt(cols[2]) : 1;
+      const paymentMethod = (cols[3] || "CASH").toUpperCase();
+      const taxAmount = cols[4] ? parseAmount(cols[4]) : undefined;
       if (!date || isNaN(total)) continue;
       try {
-        await fetch("/api/sales", {
+        const response = await fetch("/api/sales", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ date, total, coverCount: covers, type: "MANUAL", source: "corrispettivi_csv" }),
+          body: JSON.stringify({ clientId: getClientId(), date, total, ...(taxAmount == null ? {} : { taxAmount }), coverCount: covers, paymentMethod, type: "MANUAL", source: "corrispettivi_csv" }),
         });
-        count++;
-      } catch {}
+        if (response.ok) count++;
+        else { const result = await response.json(); errors.push(`Riga ${i + 1}: ${result.error || "non importata"}`); }
+      } catch { errors.push(`Riga ${i + 1}: errore di rete`); }
     }
-    setMsg(`✅ ${count} corrispettivi importati`);
+    setMsg(`${count} corrispettivi importati.${errors.length ? ` ${errors.length} righe non importate: ${errors.slice(0, 3).join(" · ")}` : ""}`);
     setCsvText("");
     loadSales();
   };
@@ -111,14 +142,14 @@ export default function CorrispettiviPage() {
               </div>
             </div>
             <textarea value={csvText} onChange={e => setCsvText(e.target.value)}
-              placeholder={`Data, Totale, Coperti, Pagamento\n2026-01-15, 1840.50, 62, CASH\n2026-01-16, 2100.00, 70, CARD`}
+              placeholder={`Data, Totale lordo, Coperti, Pagamento, IVA\n2026-01-15, 1840.50, 62, CASH, 167.32\n2026-01-16, 2100.00, 70, CARD, 190.91`}
               className="w-full h-32 border border-gray-300 rounded-lg p-3 text-xs font-mono resize-none" />
             <button onClick={handleCsvPaste} disabled={!csvText.trim()}
               className="mt-2 px-4 py-2 bg-primary text-white rounded-lg text-sm disabled:opacity-50">
               Importa CSV
             </button>
             <p className="text-xs text-gray-400 mt-2">
-              Formato: Data, Totale, Coperti, Pagamento. Separatore: virgola, punto e virgola o tab.
+              Formato: Data, Totale lordo, Coperti, Pagamento, IVA (facoltativa). Separatore: virgola, punto e virgola o tab. Se l’IVA manca, il ricavo netto resta N/D.
             </p>
           </div>
 
@@ -156,6 +187,10 @@ export default function CorrispettiviPage() {
               <input type="number" step="0.01" value={manualTotal} onChange={e => setManualTotal(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="1840.50" />
             </div>
             <div>
+              <label className="text-xs text-gray-500 mb-1 block">IVA totale inclusa (facoltativa, da documento)</label>
+              <input type="number" min="0" step="0.01" value={manualTax} onChange={e => setManualTax(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="lascia vuoto se non disponibile" />
+            </div>
+            <div>
               <label className="text-xs text-gray-500 mb-1 block">Coperti</label>
               <input type="number" value={manualCovers} onChange={e => setManualCovers(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="62" />
             </div>
@@ -179,7 +214,7 @@ export default function CorrispettiviPage() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50"><tr><th className="text-left px-3 py-2">Data</th><th className="text-right px-3 py-2">Totale</th><th className="text-right px-3 py-2">Coperti</th><th className="text-center px-3 py-2">Pagamento</th><th className="text-center px-3 py-2">Fonte</th></tr></thead>
+               <thead className="bg-gray-50"><tr><th className="text-left px-3 py-2">Data</th><th className="text-right px-3 py-2">Incasso lordo</th><th className="text-right px-3 py-2">Coperti</th><th className="text-center px-3 py-2">Pagamento</th><th className="text-center px-3 py-2">Fonte</th><th className="text-center px-3 py-2">IVA / ricavo netto</th></tr></thead>
               <tbody className="divide-y">
                 {sales.slice(0, 50).map((s: any) => (
                   <tr key={s.id} className="hover:bg-gray-50">
@@ -188,6 +223,7 @@ export default function CorrispettiviPage() {
                     <td className="px-3 py-2 text-right">{s.coverCount}</td>
                     <td className="px-3 py-2 text-center"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">{s.paymentMethod}</span></td>
                     <td className="px-3 py-2 text-center text-xs text-gray-400">{s.source || "-"}</td>
+                    <td className="px-3 py-2 text-center text-xs">{s.items?.length > 0 ? s.items.every((item: any) => item.vatRateKnown !== false) ? <span className="text-emerald-700">Calcolata dalle righe</span> : <span className="text-amber-700">IVA riga da verificare</span> : s.taxAmountKnown ? <span className="text-emerald-700">€{s.taxAmount.toFixed(2)} verificata</span> : <div className="flex items-center justify-center gap-1"><input aria-label="IVA del corrispettivo" type="number" min="0" max={s.total} step="0.01" value={taxEditId===s.id?taxEditAmount:""} onChange={event=>{setTaxEditId(s.id);setTaxEditAmount(event.target.value);}} placeholder="IVA N/D" className="w-20 rounded border border-gray-300 px-1.5 py-1 text-right text-xs"/><button onClick={()=>void saveExistingTax(s.id)} disabled={taxEditId!==s.id||taxEditAmount===""} className="rounded bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-40">Verifica</button></div>}</td>
                   </tr>
                 ))}
               </tbody>

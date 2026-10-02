@@ -3,22 +3,28 @@ import { prisma } from "@/lib/db";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+  const clientId = searchParams.get("clientId") || "default";
   const fromDate = searchParams.get("from");
   const toDate = searchParams.get("to");
-  const limit = searchParams.get("limit") || "100";
+  const requestedLimit = Number.parseInt(searchParams.get("limit") || "100", 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 1000)) : 100;
 
-  const where: Record<string, unknown> = {};
+  const where: Record<string, any> = { clientId, type: { not: "POS" } };
 
   if (fromDate || toDate) {
     where.date = {};
-    if (fromDate) (where.date as Record<string, unknown>).gte = new Date(fromDate);
-    if (toDate) (where.date as Record<string, unknown>).lte = new Date(toDate);
+    if (fromDate) where.date.gte = new Date(`${fromDate}T00:00:00`);
+    if (toDate) {
+      const exclusiveEnd = new Date(`${toDate}T00:00:00`);
+      exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+      where.date.lt = exclusiveEnd;
+    }
   }
 
   const sales = await prisma.sale.findMany({
     where,
     orderBy: { date: "desc" },
-    take: parseInt(limit),
+    take: limit,
     include: {
       items: true,
     },
@@ -30,98 +36,46 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-
-    const {
-      date,
-      total,
-      taxAmount = 0,
-      paymentMethod = "CASH",
-      coverCount = 1,
-      posId,
-      operatorName,
-      tableNumber,
-      orderNumbers,
-      items = [],
-    } = body;
-
-    // Validate required fields
-    if (!total || total <= 0) {
-      return NextResponse.json(
-        { error: "Total must be greater than 0" },
-        { status: 400 }
-      );
+    const total = Number(body.total);
+    const taxAmount = body.taxAmount == null ? 0 : Number(body.taxAmount);
+    const coverCount = Number(body.coverCount ?? 1);
+    const date = body.date ? new Date(body.date) : new Date();
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(taxAmount) || taxAmount < 0 || taxAmount > total || !Number.isInteger(coverCount) || coverCount < 0 || Number.isNaN(date.getTime())) {
+      return NextResponse.json({ error: "Data, incasso, imposta e coperti devono essere validi" }, { status: 400 });
+    }
+    const normalizedItems = items.map((item: any) => ({
+      productName: String(item.productName || "Prodotto non identificato"),
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unitPrice),
+      totalPrice: Number(item.totalPrice),
+      vatRate: Number(item.vatRate ?? 10),
+      vatRateKnown: item.vatRateKnown === true || item.vatRate != null,
+      dishId: item.dishId || null,
+    }));
+    if (normalizedItems.some((item: any) => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0 || !Number.isFinite(item.totalPrice) || item.totalPrice < 0 || !Number.isFinite(item.vatRate) || item.vatRate < 0)) {
+      return NextResponse.json({ error: "Una o più righe prodotto non sono valide" }, { status: 400 });
     }
 
-    // Create sale with items
     const sale = await prisma.sale.create({
       data: {
-        date: date ? new Date(date) : new Date(),
+        date,
         total,
         taxAmount,
-        paymentMethod,
+        taxAmountKnown: body.taxAmountKnown === true || Object.prototype.hasOwnProperty.call(body, "taxAmount"),
+        paymentMethod: String(body.paymentMethod || "CASH").toUpperCase(),
         coverCount,
-        posId,
-        operatorName,
-        tableNumber,
-        orderNumbers,
-        items: {
-          create: items.map((item: {
-            productName: string;
-            quantity: number;
-            unitPrice: number;
-            totalPrice: number;
-            vatRate?: number;
-            dishId?: string;
-          }) => ({
-            productName: item.productName,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice,
-            vatRate: item.vatRate || 10,
-            dishId: item.dishId,
-          })),
-        },
+        posId: body.posId || null,
+        operatorName: body.operatorName || null,
+        tableNumber: body.tableNumber || null,
+        orderNumbers: body.orderNumbers || null,
+        clientId: body.clientId || "default",
+        type: body.type || "MANUAL",
+        source: body.source || "manual",
+        items: { create: normalizedItems },
       },
-      include: {
-        items: true,
-      },
+      include: { items: true },
     });
-
-    // Update or create daily summary
-    const saleDate = new Date(sale.date);
-    const dayStart = new Date(saleDate.setHours(0, 0, 0, 0));
-
-    const existingSummary = await prisma.dailySummary.findUnique({
-      where: { date: dayStart },
-    });
-
-    if (existingSummary) {
-      await prisma.dailySummary.update({
-        where: { id: existingSummary.id },
-        data: {
-          totalRevenue: existingSummary.totalRevenue + sale.total,
-          totalTax: existingSummary.totalTax + sale.taxAmount,
-          totalCash: sale.paymentMethod === "CASH" ? existingSummary.totalCash + sale.total : existingSummary.totalCash,
-          totalCard: sale.paymentMethod === "CARD" ? existingSummary.totalCard + sale.total : existingSummary.totalCard,
-          coverCount: existingSummary.coverCount + sale.coverCount,
-          transactionCount: existingSummary.transactionCount + 1,
-          averageTicket: (existingSummary.totalRevenue + sale.total) / (existingSummary.transactionCount + 1),
-        },
-      });
-    } else {
-      await prisma.dailySummary.create({
-        data: {
-          date: dayStart,
-          totalRevenue: sale.total,
-          totalTax: sale.taxAmount,
-          totalCash: sale.paymentMethod === "CASH" ? sale.total : 0,
-          totalCard: sale.paymentMethod === "CARD" ? sale.total : 0,
-          coverCount: sale.coverCount,
-          transactionCount: 1,
-          averageTicket: sale.total,
-        },
-      });
-    }
 
     return NextResponse.json(sale, { status: 201 });
   } catch (error) {

@@ -1,59 +1,35 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { calculateRecipeCost, getContributionMargin, getNetSellingPrice } from "@/lib/recipe-cost";
-import { calcRicavoNettoRiga } from "@/lib/metrics";
+import { NextRequest, NextResponse } from "next/server";
+import { GET as getRevenueManagement } from "../../revenue-management/route";
 
-export async function GET() {
-  const dishes = await prisma.dish.findMany({
-    include: {
-      recipes: { include: { ingredient: true } },
-      saleItems: true,
-      category: true,
-    },
-  });
+export const dynamic = "force-dynamic";
 
-  const marginAnalysis = dishes.map((dish) => {
-    const costing = calculateRecipeCost(dish);
-    const recipeCost = costing.costPerPortion;
+/** Compatibility endpoint backed by the Revenue Management calculations. */
+export async function GET(request: NextRequest) {
+  const response = await getRevenueManagement(request);
+  const data = await response.json();
+  if (!response.ok) return NextResponse.json(data, { status: response.status });
 
-    const revenue = dish.saleItems.reduce((sum, item) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
-    const timesSold = dish.saleItems.reduce((sum, item) => sum + item.quantity, 0);
-
-    const marginValue = getContributionMargin(recipeCost, dish.price, dish.vatRate);
-    const netPrice = getNetSellingPrice(dish.price, dish.vatRate);
-    const marginPercentage = marginValue != null && netPrice ? (marginValue / netPrice) * 100 : null;
-
+  const sorted = (data.summary.dishes || []).map((dish: any) => {
+    const marginPercentage = dish.marginPerPortion != null && dish.averageNetPrice > 0
+      ? dish.marginPerPortion / dish.averageNetPrice * 100
+      : null;
     return {
       id: dish.id,
       name: dish.name,
-      category: dish.category.name,
-      price: dish.price,
-      recipeCost,
-      recipeCostBatch: costing.totalBatchCost,
-      recipeComplete: costing.complete,
-      vatRate: dish.vatRate,
-      marginValue,
-      marginPercentage: marginPercentage == null ? null : parseFloat(marginPercentage.toFixed(1)),
-      timesSold,
-      revenue,
+      category: dish.category,
+      price: dish.listPrice,
+      actualNetPrice: dish.averageNetPrice,
+      recipeCost: dish.recipeCost,
+      recipeComplete: dish.recipeComplete,
+      marginValue: dish.marginPerPortion,
+      marginPercentage: marginPercentage == null ? null : Number(marginPercentage.toFixed(1)),
+      timesSold: dish.units,
+      revenue: dish.revenue,
     };
-  });
-
-  const sorted = marginAnalysis.sort((a, b) => {
-    if (a.marginPercentage == null) return 1;
-    if (b.marginPercentage == null) return -1;
-    return b.marginPercentage - a.marginPercentage;
-  });
-
-  const complete = sorted.filter(dish => dish.marginPercentage != null);
+  }).sort((a: any, b: any) => (b.marginPercentage ?? -Infinity) - (a.marginPercentage ?? -Infinity));
+  const complete = sorted.filter((dish: any) => dish.marginPercentage != null);
   const bestMargin = complete[0] || null;
   const worstMargin = complete[complete.length - 1] || null;
-  const averageMargin = complete.length > 0 ? complete.reduce((sum, d) => sum + d.marginPercentage!, 0) / complete.length : null;
-
-  return NextResponse.json({
-    sorted,
-    bestMargin,
-    worstMargin,
-    averageMargin: averageMargin == null ? null : parseFloat(averageMargin.toFixed(1)),
-  });
+  const averageMargin = complete.length > 0 ? complete.reduce((sum: number, dish: any) => sum + dish.marginPercentage, 0) / complete.length : null;
+  return NextResponse.json({ sorted, bestMargin, worstMargin, averageMargin: averageMargin == null ? null : Number(averageMargin.toFixed(1)), period: data.period, netRevenueCoveragePct: data.summary.netRevenueCoveragePct });
 }

@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { totalCashPosition } from "@/lib/cash-position";
 
 export const dynamic = "force-dynamic";
 
 // Lo stato patrimoniale mostra saldi operativi disponibili; non inventa
 // debiti, imposte o patrimonio netto se non sono riconciliati.
 export async function GET() {
-  const [assets, ingredients, approvedInvoices, issuedInvoices, cashTransactions] = await Promise.all([
+  const [assets, ingredients, approvedInvoices, issuedInvoices, cashTransactions, accounts] = await Promise.all([
     prisma.asset.findMany({ where: { clientId: "default", stato: "attivo" } }),
     prisma.ingredient.findMany({ where: { clientId: "default" }, select: { currentStock: true, unitPrice: true } }),
     prisma.invoice.findMany({ where: { clientId: "default", status: { in: ["RECEIVED", "PROCESSED"] } }, select: { totalAmount: true, taxAmount: true } }),
     prisma.fatturaEmessa.findMany({ where: { clientId: "default", stato: "EMESSA" }, select: { importo: true, iva: true } }),
-    prisma.cashTransaction.findMany({ where: { clientId: "default" }, select: { amount: true } }),
+    prisma.cashTransaction.findMany({ where: { clientId: "default" }, select: { accountId: true, date: true, amount: true } }),
+    prisma.account.findMany({ where: { clientId: "default", status: "active" }, select: { id: true, openingBalance: true, openingBalanceDate: true, openingBalanceConfirmed: true } }),
   ]);
 
   const immobilizzazioniLorde = assets.reduce((sum, asset) => sum + asset.costoStorico, 0);
@@ -22,7 +24,7 @@ export async function GET() {
   const immobilizzazioniNette = immobilizzazioniLorde - fondoAmmortamento;
   const valoreMagazzino = ingredients.reduce((sum, ingredient) => sum + ingredient.currentStock * ingredient.unitPrice, 0);
   const creditiClienti = issuedInvoices.reduce((sum, invoice) => sum + invoice.importo + invoice.iva, 0);
-  const liquidita = cashTransactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const liquidita = totalCashPosition(accounts, cashTransactions);
   const totaleAttivoConosciuto = immobilizzazioniNette + valoreMagazzino + creditiClienti + liquidita;
   const fattureFornitoriDaRiconciliare = approvedInvoices.reduce((sum, invoice) => sum + invoice.totalAmount + invoice.taxAmount, 0);
 
@@ -50,6 +52,8 @@ export async function GET() {
       approvedSupplierInvoicesCount: approvedInvoices.length,
       issuedInvoicesToReconcileCount: issuedInvoices.length,
       cashTransactionsCount: cashTransactions.length,
+      cashAccountsCount: accounts.length,
+      confirmedCashAccountsCount: accounts.filter(account => account.openingBalanceConfirmed).length,
       liabilitiesReconciled: false,
     },
   });

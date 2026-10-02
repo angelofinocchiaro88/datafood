@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { calcRicavoNettoRiga, calcVariazione } from "@/lib/metrics";
 import { calculateRecipeCost } from "@/lib/recipe-cost";
+import { calculateSaleFinancials } from "@/lib/sale-financials";
+import { totalCashPosition } from "@/lib/cash-position";
 
 export const dynamic = "force-dynamic";
 
@@ -89,12 +91,15 @@ function dateKey(date: Date) {
 }
 
 function summarizeSales(sales: any[], range: DateRange) {
-  let totalRev = 0, foodRev = 0, bevRev = 0, foodCost = 0, bevCost = 0, coperti = 0, missingRecipeItems = 0;
+  let totalRev = 0, grossRevenue = 0, unknownNetGross = 0, foodRev = 0, bevRev = 0, foodCost = 0, bevCost = 0, coperti = 0, missingRecipeItems = 0;
   const trendByDate = new Map<string, { date: string; ricavi: number; coperti: number; transazioni: number }>();
 
   for (const sale of sales) {
-    const itemNetRevenue = sale.items.reduce((sum: number, item: any) => sum + calcRicavoNettoRiga(item.totalPrice, item.vatRate), 0);
-    const saleNetRevenue = sale.items.length > 0 ? itemNetRevenue : Math.max(0, sale.total - sale.taxAmount);
+    const financials = calculateSaleFinancials(sale);
+    const saleNetRevenue = financials.knownNetRevenue;
+    grossRevenue += financials.grossRevenue;
+    if (financials.basis === "unknown") unknownNetGross += sale.items.length > 0 ? sale.items.filter((item: any) => item.vatRateKnown === false).reduce((sum: number, item: any) => sum + item.totalPrice, 0) : financials.grossRevenue;
+    if (financials.reconciliationDelta != null) unknownNetGross += Math.abs(financials.reconciliationDelta);
     totalRev += saleNetRevenue;
     coperti += sale.coverCount;
     const key = dateKey(new Date(sale.date));
@@ -109,6 +114,7 @@ function summarizeSales(sales: any[], range: DateRange) {
     }
 
     for (const item of sale.items) {
+      if (item.vatRateKnown === false) { missingRecipeItems++; continue; }
       if (!item.dish) {
         missingRecipeItems += 1;
         continue;
@@ -142,6 +148,9 @@ function summarizeSales(sales: any[], range: DateRange) {
   return {
     bilancio: {
       ricavi: totalRev,
+      incassiLordi: grossRevenue,
+      lordoSenzaIVAVerificata: unknownNetGross,
+      coperturaRicaviNettiPct: grossRevenue > 0 ? Math.min(100, Math.max(0, (grossRevenue - unknownNetGross) / grossRevenue * 100)) : null,
       food_sala: foodRev,
       bev_sala: bevRev,
       food_cost: foodCost,
@@ -169,20 +178,21 @@ export async function GET(request: NextRequest) {
   const previousRange = getPreviousRange(period, range);
   const salesInclude = { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } };
 
-  const [sales, previousSales, client, schedules, alerts, categories, cashTx, ingredients, activeOrders] = await Promise.all([
+  const [sales, previousSales, client, schedules, alerts, categories, cashTx, accounts, ingredients, activeOrders] = await Promise.all([
     prisma.sale.findMany({
-      where: { date: { gte: range.start, lt: range.end } },
+      where: { clientId: "default", type: { not: "POS" }, date: { gte: range.start, lt: range.end } },
       include: salesInclude,
     }),
     prisma.sale.findMany({
-      where: { date: { gte: previousRange.start, lt: previousRange.end } },
+      where: { clientId: "default", type: { not: "POS" }, date: { gte: previousRange.start, lt: previousRange.end } },
       include: salesInclude,
     }),
     prisma.client.findFirst({ where: { id: "default" } }),
     prisma.paymentSchedule.findMany({ where: { status: "open" }, orderBy: { dueDate: "asc" }, take: 6, include: { category: true } }),
     prisma.alert.findMany({ where: { isResolved: false }, orderBy: { createdAt: "desc" } }),
     prisma.cashFlowCategory.findMany(),
-    prisma.cashTransaction.findMany(),
+    prisma.cashTransaction.findMany({ where: { clientId: "default" }, select: { accountId: true, date: true, amount: true } }),
+    prisma.account.findMany({ where: { clientId: "default", status: "active" }, select: { id: true, openingBalance: true, openingBalanceDate: true, openingBalanceConfirmed: true } }),
     prisma.ingredient.findMany({ where: { minStock: { gt: 0 } }, select: { id: true, name: true, unit: true, currentStock: true, minStock: true } }),
     prisma.order.findMany({
       where: { status: { in: ["SENT", "PARTIAL"] } },
@@ -198,7 +208,7 @@ export async function GET(request: NextRequest) {
   const currentLaborPct = currentSummary.bilancio.ricavi > 0 ? currentSummary.bilancio.personale / currentSummary.bilancio.ricavi * 100 : null;
   const previousLaborPct = previousSummary.bilancio.ricavi > 0 ? previousSummary.bilancio.personale / previousSummary.bilancio.ricavi * 100 : null;
 
-  const liquidita = cashTx.reduce((s, t) => s + t.amount, 0);
+  const liquidita = totalCashPosition(accounts, cashTx);
   const stockAlerts = ingredients.filter(ingredient => ingredient.currentStock <= ingredient.minStock);
   const pendingOrders = activeOrders
     .map(order => ({
@@ -245,7 +255,8 @@ export async function GET(request: NextRequest) {
     stockAlerts,
     pendingOrders,
     cashFlowCategories: categories,
-    accountsCount: await prisma.account.count(),
+    accountsCount: accounts.length,
+    confirmedAccountsCount: accounts.filter(account => account.openingBalanceConfirmed).length,
     lastUpdate: new Date().toISOString(),
   });
 }

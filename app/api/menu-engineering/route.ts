@@ -86,18 +86,24 @@ export async function GET(request: NextRequest) {
         dishId: { not: null },
         sale: { clientId: "default", date: { gte: range.start, lt: range.end } },
       },
-      select: { dishId: true, quantity: true, totalPrice: true, vatRate: true },
+      select: { dishId: true, quantity: true, totalPrice: true, vatRate: true, vatRateKnown: true },
     }),
   ]);
 
   const dishIds = new Set(dishes.map(dish => dish.id));
   const dishVatRates = new Map(dishes.map(dish => [dish.id, dish.vatRate]));
-  const salesByDish = new Map<string, { units: number; netRevenue: number; vatWeighted: number }>();
+  const salesByDish = new Map<string, { units: number; knownUnits: number; netRevenue: number; unknownVatGross: number; vatWeighted: number }>();
   for (const line of saleItems) {
     if (!line.dishId || !dishIds.has(line.dishId) || line.quantity <= 0) continue;
-    const current = salesByDish.get(line.dishId) || { units: 0, netRevenue: 0, vatWeighted: 0 };
-    const vatRate = Number.isFinite(line.vatRate) && line.vatRate >= 0 ? line.vatRate : dishVatRates.get(line.dishId) || 10;
+    const current = salesByDish.get(line.dishId) || { units: 0, knownUnits: 0, netRevenue: 0, unknownVatGross: 0, vatWeighted: 0 };
     current.units += line.quantity;
+    if (line.vatRateKnown === false) {
+      current.unknownVatGross += line.totalPrice;
+      salesByDish.set(line.dishId, current);
+      continue;
+    }
+    const vatRate = Number.isFinite(line.vatRate) && line.vatRate >= 0 ? line.vatRate : dishVatRates.get(line.dishId) || 10;
+    current.knownUnits += line.quantity;
     current.netRevenue += calcRicavoNettoRiga(line.totalPrice, vatRate);
     current.vatWeighted += line.quantity * vatRate;
     salesByDish.set(line.dishId, current);
@@ -115,17 +121,18 @@ export async function GET(request: NextRequest) {
 
   const categories = Array.from(new Map(dishes.map(dish => [dish.categoryId, { id: dish.categoryId, name: dish.category.name }])).values());
   const menu = dishes.map(dish => {
-    const sales = salesByDish.get(dish.id) || { units: 0, netRevenue: 0, vatWeighted: 0 };
+    const sales = salesByDish.get(dish.id) || { units: 0, knownUnits: 0, netRevenue: 0, unknownVatGross: 0, vatWeighted: 0 };
     const costing = calculateRecipeCost(dish);
     const recipeCost = costing.costPerPortion;
     const missingCostIngredients = costing.lines.filter(line => !line.complete).length;
     const recipeComplete = costing.complete;
-    const vatRate = sales.units > 0 ? sales.vatWeighted / sales.units : dish.vatRate;
-    const actualNetPrice = sales.units > 0 ? sales.netRevenue / sales.units : null;
+    const vatRate = sales.knownUnits > 0 ? sales.vatWeighted / sales.knownUnits : dish.vatRate;
+    const actualNetPrice = sales.knownUnits > 0 ? sales.netRevenue / sales.knownUnits : null;
     const planningNetPrice = dish.price / (1 + vatRate / 100);
     const referenceNetPrice = actualNetPrice ?? planningNetPrice;
-    const unitMargin = recipeComplete && recipeCost != null ? referenceNetPrice - recipeCost : null;
-    const foodCostPct = recipeComplete ? getFoodCostPct(recipeCost, referenceNetPrice * (1 + vatRate / 100), vatRate) : null;
+    const hasKnownSalePrice = sales.knownUnits > 0 || sales.units === 0;
+    const unitMargin = recipeComplete && recipeCost != null && hasKnownSalePrice ? referenceNetPrice - recipeCost : null;
+    const foodCostPct = recipeComplete && hasKnownSalePrice ? getFoodCostPct(recipeCost, referenceNetPrice * (1 + vatRate / 100), vatRate) : null;
     const minimumGrossPriceAtTargetFoodCost = recipeComplete ? getGrossTargetPrice(recipeCost, safeTargetFoodCost, vatRate) : null;
 
     return {
@@ -142,6 +149,8 @@ export async function GET(request: NextRequest) {
       missingCostIngredients,
       recipeComplete,
       salesQty: sales.units,
+      knownVatUnits: sales.knownUnits,
+      unknownVatGross: sales.unknownVatGross,
       salesMixPct: 0,
       netRevenue: sales.netRevenue,
       actualNetPrice,
@@ -149,7 +158,7 @@ export async function GET(request: NextRequest) {
       analysisGrossPrice: referenceNetPrice * (1 + vatRate / 100),
       analysisPriceSource: actualNetPrice == null ? "scenario" as const : "consuntivo" as const,
       unitMargin,
-      totalContribution: unitMargin == null ? null : unitMargin * sales.units,
+      totalContribution: unitMargin == null ? null : unitMargin * (sales.knownUnits || sales.units),
       foodCostPct,
       minimumGrossPriceAtTargetFoodCost,
       quadrant: "non-valutabile" as "star" | "puzzle" | "plow-horse" | "dog" | "non-valutabile",
@@ -177,6 +186,10 @@ export async function GET(request: NextRequest) {
       dish.recommendation = "Nessuna vendita nel periodo. Verifica disponibilità e presenza nel menù; il margine mostrato è una simulazione sul prezzo di listino e sull’IVA selezionata.";
       continue;
     }
+    if (dish.knownVatUnits === 0) {
+      dish.recommendation = "Le quantità vendute sono presenti, ma l’IVA delle righe non è verificata: il piatto non entra nella matrice di marginalità finché il ricavo netto non è attendibile.";
+      continue;
+    }
 
     const highPopularity = dish.salesQty >= popularityThreshold;
     const highContribution = averageContribution != null && (dish.unitMargin || 0) >= averageContribution;
@@ -201,7 +214,8 @@ export async function GET(request: NextRequest) {
   const totalNetRevenue = menu.reduce((sum, dish) => sum + dish.netRevenue, 0);
   const totalContribution = eligibleSold.reduce((sum, dish) => sum + (dish.totalContribution || 0), 0);
   const netRevenueWithDish = menu.reduce((sum, dish) => sum + dish.netRevenue, 0);
-  const totalTheoreticalCost = eligibleSold.reduce((sum, dish) => sum + (dish.recipeCost || 0) * dish.salesQty, 0);
+  const totalTheoreticalCost = eligibleSold.reduce((sum, dish) => sum + (dish.recipeCost || 0) * (dish.knownVatUnits || dish.salesQty), 0);
+  const unknownVatGross = menu.reduce((sum, dish) => sum + dish.unknownVatGross, 0);
 
   return NextResponse.json({
     period: { key: range.period, label: range.label, from: dateKey(range.start), to: dateKey(addDays(range.end, -1)) },
@@ -216,10 +230,11 @@ export async function GET(request: NextRequest) {
       unclassifiedItems: menu.length - classified.length,
       units: totalUnits,
       netRevenue: totalNetRevenue,
+      unknownVatGross,
       theoreticalCost: totalTheoreticalCost,
       contribution: totalContribution,
       unlinkedSalesLines,
-      costCoveragePct: netRevenueWithDish > 0 ? (eligibleSold.reduce((sum, dish) => sum + dish.netRevenue, 0) / netRevenueWithDish) * 100 : null,
+      costCoveragePct: netRevenueWithDish + unknownVatGross > 0 ? (eligibleSold.reduce((sum, dish) => sum + dish.netRevenue, 0) / (netRevenueWithDish + unknownVatGross)) * 100 : null,
     },
     menu,
   });

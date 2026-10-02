@@ -188,7 +188,8 @@ export default function CostControlPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold text-slate-900">Qualità e copertura del dato</h2><p className="text-xs text-slate-500">La solidità del risultato dipende da queste fonti.</p></div><Link href="/report" className="text-xs font-medium text-emerald-700 hover:underline">KPI Registry →</Link></div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <Coverage label="Vendite collegate" value={percent(sources.sales.netRevenueCoveragePct)} detail={`${sources.sales.linkedLines} righe collegate · ${sources.sales.unlinkedSaleLines} senza piatto`} />
+          <Coverage label="Vendite collegate" value={percent(sources.sales.linkedRevenueCoveragePct)} detail={`${sources.sales.linkedLines} righe collegate · ${sources.sales.unlinkedSaleLines} senza piatto`} />
+          <Coverage label="Ricavi netti verificati" value={percent(sources.sales.netRevenueCoveragePct)} detail={`${money(sources.sales.unknownNetGross)} incassi lordi senza IVA verificata`} />
           <Coverage label="Ricette complete sulle vendite" value={percent(sources.recipeCosts.costCoveragePct)} detail={`${sources.recipeCosts.missingLines} righe vendute non calcolabili`} />
           <Coverage label="Fatture classificate" value={percent(sources.invoices.classificationCoveragePct)} detail={`${sources.invoices.classified}/${sources.invoices.approved} approvate`} />
           <Coverage label="Costo personale" value={sourceLabel(sources.payroll.source)} detail={`${sources.payroll.actualMonths} mesi consuntivi · ${sources.payroll.estimatedMonths} stimati · ${sources.payroll.missingMonths} mancanti`} />

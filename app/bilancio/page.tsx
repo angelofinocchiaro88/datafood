@@ -189,9 +189,10 @@ export default function BilancioPage() {
           <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
             <h4 className="text-sm font-semibold text-slate-800">Importi da riconciliare</h4>
             <p className="mt-1 text-xs text-slate-500">Sono saldi operativi censiti, non passività certe finché non vengono abbinati a pagamenti e contabilità.</p>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Fatture fornitori approvate</p><p className="mt-1 text-lg font-bold text-slate-900">{fm(sp.fattureFornitoriDaRiconciliare)}</p><p className="text-[10px] text-slate-400">{data.dataQuality.approvedSupplierInvoicesCount} documenti · stato pagamento non riconciliato</p></div>
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Crediti da fatture emesse</p><p className="mt-1 text-lg font-bold text-slate-900">{fm(sp.creditiClienti)}</p><p className="text-[10px] text-slate-400">{data.dataQuality.issuedInvoicesToReconcileCount} fatture EMESSE · incassi non abbinati</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Disponibilità da conti Cash Flow</p><p className="mt-1 text-lg font-bold text-slate-900">{fm(sp.liquidita)}</p><p className="text-[10px] text-slate-400">{data.dataQuality.confirmedCashAccountsCount}/{data.dataQuality.cashAccountsCount} saldi iniziali verificati · movimenti successivi inclusi</p></div>
             </div>
           </div>
 

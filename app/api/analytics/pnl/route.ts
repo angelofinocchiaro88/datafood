@@ -1,127 +1,48 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { calculateRecipeCost } from "@/lib/recipe-cost";
-import { calcRicavoNettoRiga } from "@/lib/metrics";
+import { NextRequest, NextResponse } from "next/server";
+import { GET as getCostControl } from "../../cost-control/route";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const q1Start = new Date(2026, 0, 1);
-  const q1End = new Date(2026, 2, 31);
-  const sales = await prisma.sale.findMany({
-    where: { date: { gte: q1Start, lte: q1End } },
-    include: { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } },
-  });
+/** Legacy-compatible view backed by the same sources as Cost Control. */
+export async function GET(request: NextRequest) {
+  const response = await getCostControl(request);
+  const data = await response.json();
+  if (!response.ok) return NextResponse.json(data, { status: response.status });
 
-  // Revenue calculation
-  let food_sala = 0, bev_sala = 0, foodCost = 0, bevCost = 0, coperti = 0;
-  const foodDetail: Record<string, number> = { carni: 0, pesce: 0, verdure: 0, latticini: 0, pasta: 0, pane: 0, dessert: 0, condimenti: 0, altri: 0 };
-  const bevDetail: Record<string, number> = { acqua: 0, vini: 0, birre: 0, spirits: 0, caffe: 0 };
-
-  const classifyIngredient = (name: string): string => {
-    const n = name.toLowerCase();
-    if (n.includes("manzo") || n.includes("vitello") || n.includes("scottona") || n.includes("pollo") || n.includes("guanciale")) return "carni";
-    if (n.includes("branzino") || n.includes("pesce") || n.includes("gamber")) return "pesce";
-    if (n.includes("cipolla") || n.includes("limon") || n.includes("patat") || n.includes("pomodoro") || n.includes("rosmarino") || n.includes("aglio") || n.includes("porcini")) return "verdure";
-    if (n.includes("parmigiano") || n.includes("pecorino") || n.includes("mascarpone") || n.includes("burro") || n.includes("uova") || n.includes("tuorlo")) return "latticini";
-    if (n.includes("riso") || n.includes("spaghetti") || n.includes("pasta") || n.includes("farina") || n.includes("savoiardi")) return "pasta";
-    if (n.includes("pane")) return "pane";
-    if (n.includes("cacao") || n.includes("zucchero") || n.includes("caffe") || n.includes("marsala") || n.includes("vanillina")) return "dessert";
-    if (n.includes("olio") || n.includes("sale") || n.includes("pepe") || n.includes("brodo") || n.includes("vino")) return "condimenti";
-    return "altri";
-  };
-
-  const classifyBev = (name: string): string => {
-    const n = name.toLowerCase();
-    if (n.includes("acqua") || n.includes("coca") || n.includes("cola")) return "acqua";
-    if (n.includes("vino")) return "vini";
-    if (n.includes("birra")) return "birre";
-    if (n.includes("spirit") || n.includes("gin") || n.includes("vodka")) return "spirits";
-    if (n.includes("caffe") || n.includes("caffè")) return "caffe";
-    return "altri";
-  };
-
-  for (const s of sales) {
-    coperti += s.coverCount;
-    for (const item of s.items) {
-      const isBev = item.dish?.category?.name === "Bevande";
-      const recipeCost = item.dish ? calculateRecipeCost(item.dish) : null;
-      const costo = (recipeCost?.costPerPortion || 0) * item.quantity;
-      const ricavoNetto = calcRicavoNettoRiga(item.totalPrice, item.vatRate);
-      
-      if (isBev) {
-        bev_sala += ricavoNetto;
-        bevCost += costo;
-        for (const [index, r] of (item.dish?.recipes || []).entries()) {
-          const cat = classifyBev(r.ingredient.name);
-          const lineCost = recipeCost?.complete ? recipeCost.lines[index]?.lineCost || 0 : 0;
-          bevDetail[cat] = (bevDetail[cat] || 0) + lineCost / (recipeCost?.yieldPortions || 1) * item.quantity;
-        }
-      } else {
-        food_sala += ricavoNetto;
-        foodCost += costo;
-        for (const [index, r] of (item.dish?.recipes || []).entries()) {
-          const cat = classifyIngredient(r.ingredient.name);
-          const lineCost = recipeCost?.complete ? recipeCost.lines[index]?.lineCost || 0 : 0;
-          foodDetail[cat] = (foodDetail[cat] || 0) + lineCost / (recipeCost?.yieldPortions || 1) * item.quantity;
-        }
-      }
-    }
-  }
-
-  const totalRev = food_sala + bev_sala;
-  const cogsTotal = foodCost + bevCost;
-  const margineLordo = totalRev - cogsTotal;
-
-  // Personnel (estimated 30% of revenue)
-  const personaleTotal = totalRev * 0.30;
-  const personale = { cucina: personaleTotal * 0.45, sala: personaleTotal * 0.30, bar: personaleTotal * 0.10, delivery: 0, oneri: personaleTotal * 0.12, interinale: 0, accessori: personaleTotal * 0.03, total: personaleTotal };
-  
-  const primeCost = cogsTotal + personaleTotal;
-
-  // Operating costs
-  const operativi = {
-    delivery_comm: 0, marketing: totalRev * 0.015, software: totalRev * 0.005,
-    consulenze: totalRev * 0.01, pulizia: totalRev * 0.008, materiali: totalRev * 0.005,
-    lavanderia: totalRev * 0.003, manutenzioni: totalRev * 0.007, utenze: totalRev * 0.045, attrezzature: totalRev * 0.003,
-    total: totalRev * 0.101,
-  };
-
-  // Structure costs
-  const struttura = {
-    affitto: 40000 / 4, condominio: 2000 / 4, assicurazioni: 3000 / 4,
-    amministrative: totalRev * 0.01, tributi: totalRev * 0.005,
-    vigilanza: 1500 / 4, generali: totalRev * 0.008,
-    total: (40000/4) + (2000/4) + (3000/4) + (totalRev * 0.01) + (totalRev * 0.005) + (1500/4) + (totalRev * 0.008),
-  };
-
-  const ebitda = totalRev - cogsTotal - personaleTotal - operativi.total - struttura.total;
-  const ammortamenti = 10000 / 4;
-  const ebit = ebitda - ammortamenti;
-  const finanziaria = { oneri: 3000 / 4, straordinari: 0, total: 3000 / 4 };
-  const utileAnteImposte = ebit - finanziaria.total;
-  const imposte = utileAnteImposte * 0.28;
-  const utileNetto = utileAnteImposte - imposte;
-
-  // Correct margine_reparto
-  const margineRepartoVal = totalRev - cogsTotal - personaleTotal - operativi.total;
-
+  const kpi = data.kpi;
+  const pnl = data.pnl;
   return NextResponse.json({
-    ricavi: { food_sala, bev_sala, delivery: 0, takeaway: 0, eventi: 0, altri: 0, total: totalRev },
-    cogs: { food: foodCost, bev: bevCost, packaging: 0, total: cogsTotal, food_detail: foodDetail, bev_detail: bevDetail },
-    margine_lordo: margineLordo,
-    personale,
-    prime_cost: primeCost,
-    operativi,
-    margine_reparto: margineRepartoVal,
-    struttura,
-    ebitda,
-    ammortamenti,
-    ebit,
-    finanziaria,
-    utile_ante_imposte: utileAnteImposte,
-    imposte,
-    utile_netto: utileNetto,
-    coperti,
+    period: data.period,
+    range: data.period,
+    ricavi: {
+      food_sala: kpi.foodRevenue,
+      bev_sala: kpi.beverageRevenue,
+      delivery: 0,
+      takeaway: 0,
+      eventi: pnl.issuedRevenue,
+      altri: 0,
+      total: kpi.revenue,
+    },
+    cogs: {
+      food: pnl.theoreticalFoodCost,
+      bev: pnl.theoreticalBeverageCost,
+      packaging: 0,
+      total: pnl.theoreticalFoodCost + pnl.theoreticalBeverageCost,
+    },
+    margine_lordo: pnl.grossMargin,
+    personale: { total: pnl.payroll, source: data.sources.payroll.source },
+    prime_cost: kpi.primeCost,
+    operativi: { total: pnl.operatingInvoices },
+    struttura: { total: null },
+    ebitda: pnl.EBITDAEstimate,
+    ammortamenti: pnl.depreciationEstimate,
+    ebit: pnl.operatingResultEstimate,
+    finanziaria: { total: pnl.financialCosts },
+    utile_ante_imposte: pnl.resultBeforeTaxEstimate,
+    imposte: null,
+    utile_netto: null,
+    coperti: kpi.covers,
+    sources: data.sources,
+    estimateNotes: data.estimateNotes,
   });
 }
