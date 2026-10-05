@@ -14,6 +14,8 @@ export function ClassifyModal({ invoice, onClose, onClassify }: ClassifyModalPro
   const [categorie, setCategorie] = useState<string[]>([]);
   const [sottocategorie, setSottocategorie] = useState<string[]>([]);
   const [voci, setVoci] = useState<string[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [orderId, setOrderId] = useState<string>(invoice?.orderId || "");
 
   const [macro, setMacro] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -22,6 +24,7 @@ export function ClassifyModal({ invoice, onClose, onClassify }: ClassifyModalPro
 
   useEffect(() => {
     fetch("/api/cost-topology").then(r => r.json()).then(d => setMacroAreas(d.macro_areas || []));
+    fetch("/api/orders").then(r => r.json()).then(d => setOrders((d.orders || []).filter((order: any) => order.status === "RECEIVED" && order.supplierId === invoice?.supplierId)));
   }, []);
 
   useEffect(() => {
@@ -42,7 +45,7 @@ export function ClassifyModal({ invoice, onClose, onClassify }: ClassifyModalPro
   const contoGestionale = macroAreas.find(m => m.macro_area === macro)?.conto_gestionale || "";
 
   const handleSave = () => {
-    onClassify({ macroArea: macro, categoria, sottocategoria, voceDettaglio: voce || sottocategoria, contoGestionale });
+    onClassify({ macroArea: macro, categoria, sottocategoria, voceDettaglio: voce || sottocategoria, contoGestionale, orderId: orderId || null });
   };
 
   return (
@@ -64,6 +67,8 @@ export function ClassifyModal({ invoice, onClose, onClassify }: ClassifyModalPro
             <p className="font-medium text-amber-800">Importo: €{invoice?.totalAmount?.toFixed(2) || "0.00"}</p>
             <p className="text-xs text-amber-600 mt-0.5">Seleziona la classificazione gerarchica del costo</p>
           </div>
+
+          {orders.length > 0 && <div><label className="text-xs font-medium text-gray-500 mb-1 block">Ordine ricevuto da riconciliare (facoltativo)</label><select value={orderId} onChange={event=>setOrderId(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"><option value="">Nessun ordine collegato</option>{orders.map(order=><option key={order.id} value={order.id}>Ordine #{order.id.slice(-6)} · {new Date(order.date).toLocaleDateString("it-IT")} · €{order.total.toFixed(2)}</option>)}</select><p className="mt-1 text-[10px] text-gray-400">Solo ordini ricevuti dallo stesso fornitore.</p></div>}
 
           {/* Livello 1: Macro Area */}
           <div>

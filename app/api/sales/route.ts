@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -33,8 +34,11 @@ export async function GET(request: Request) {
   return NextResponse.json(sales);
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const accessResult = await requireClientAccess(request, true);
+    if ("response" in accessResult) return accessResult.response;
+    const { access } = accessResult;
     const body = await request.json();
     const total = Number(body.total);
     const taxAmount = body.taxAmount == null ? 0 : Number(body.taxAmount);
@@ -44,15 +48,24 @@ export async function POST(request: Request) {
     if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(taxAmount) || taxAmount < 0 || taxAmount > total || !Number.isInteger(coverCount) || coverCount < 0 || Number.isNaN(date.getTime())) {
       return NextResponse.json({ error: "Data, incasso, imposta e coperti devono essere validi" }, { status: 400 });
     }
-    const normalizedItems = items.map((item: any) => ({
+    const requestedDishIds = Array.from(new Set<string>(items.map((item: any) => item.dishId).filter((id: unknown): id is string => typeof id === "string" && id.length > 0)));
+    const dishes = requestedDishIds.length > 0 ? await prisma.dish.findMany({ where: { id: { in: requestedDishIds } }, select: { id: true, vatRate: true } }) : [];
+    const dishById = new Map(dishes.map(dish => [dish.id, dish]));
+    if (dishById.size !== requestedDishIds.length) return NextResponse.json({ error: "Una o più righe sono collegate a piatti di un altro ristorante o inesistenti" }, { status: 400 });
+    const normalizedItems = items.map((item: any) => {
+      const dish = item.dishId ? dishById.get(item.dishId) : null;
+      const vatProvided = item.vatRate != null;
+      return ({
       productName: String(item.productName || "Prodotto non identificato"),
       quantity: Number(item.quantity),
       unitPrice: Number(item.unitPrice),
       totalPrice: Number(item.totalPrice),
-      vatRate: Number(item.vatRate ?? 10),
-      vatRateKnown: item.vatRateKnown === true || item.vatRate != null,
+      vatRate: Number(item.vatRate ?? dish?.vatRate ?? 10),
+      vatRateKnown: item.vatRateKnown === true || vatProvided || Boolean(dish),
       dishId: item.dishId || null,
-    }));
+      clientId: access.client.id,
+      });
+    });
     if (normalizedItems.some((item: any) => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0 || !Number.isFinite(item.totalPrice) || item.totalPrice < 0 || !Number.isFinite(item.vatRate) || item.vatRate < 0)) {
       return NextResponse.json({ error: "Una o più righe prodotto non sono valide" }, { status: 400 });
     }
@@ -76,6 +89,7 @@ export async function POST(request: Request) {
       },
       include: { items: true },
     });
+    await recordClientAudit(access, "sale_recorded", "Sale", sale.id, { grossTotal: sale.total, itemCount: normalizedItems.length, source: sale.source });
 
     return NextResponse.json(sale, { status: 201 });
   } catch (error) {

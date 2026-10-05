@@ -16,20 +16,27 @@ export function ClientSelector() {
   const router = useRouter();
 
   useEffect(() => {
-    const stored = localStorage.getItem("df_clientId") || "default";
-    setSelected(stored);
+    setSelected(localStorage.getItem("df_clientId") || "");
     fetchClients();
   }, []);
 
   const fetchClients = async () => {
     try {
-      const res = await fetch("/api/clients");
+      const res = await fetch("/api/auth/me");
       const data = await res.json();
+      if (!res.ok) return;
       setClients(data.clients || []);
+      const active = data.activeClientId || "";
+      const stored = localStorage.getItem("df_clientId") || "";
+      if (active && active !== stored) await fetch("/api/auth/select-client", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: active }) });
+      setSelected(active);
+      if (active) localStorage.setItem("df_clientId", active);
     } catch {}
   };
 
-  const handleSelect = (clientId: string) => {
+  const handleSelect = async (clientId: string) => {
+    const response = await fetch("/api/auth/select-client", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId }) });
+    if (!response.ok) return;
     localStorage.setItem("df_clientId", clientId);
     setSelected(clientId);
     setOpen(false);

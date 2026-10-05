@@ -13,8 +13,11 @@ export async function POST(request: NextRequest) {
   if (!Number.isFinite(parsedWastePct) || parsedWastePct < 0 || parsedWastePct >= 100) {
     return NextResponse.json({ error: "Lo scarto deve essere compreso tra 0 e meno di 100%" }, { status: 400 });
   }
-  const ingredient = await prisma.ingredient.findUnique({ where: { id: ingredientId }, select: { id: true, unit: true } });
-  if (!ingredient) return NextResponse.json({ error: "Ingrediente non trovato" }, { status: 404 });
+  const [ingredient, dish] = await Promise.all([
+    prisma.ingredient.findUnique({ where: { id: ingredientId }, select: { id: true, unit: true } }),
+    prisma.dish.findUnique({ where: { id: dishId }, select: { id: true } }),
+  ]);
+  if (!ingredient || !dish) return NextResponse.json({ error: "Piatto o ingrediente non trovato nel ristorante selezionato" }, { status: 404 });
   if (unit?.trim() && getUnitFamily(unit) !== getUnitFamily(ingredient.unit)) {
     return NextResponse.json({ error: `Unità ricetta incompatibile con l'unità acquisto (${ingredient.unit})` }, { status: 400 });
   }

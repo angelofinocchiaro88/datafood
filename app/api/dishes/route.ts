@@ -20,6 +20,8 @@ export async function POST(request: NextRequest) {
   if (![4, 5, 10, 22].includes(parsedVatRate) || !Number.isFinite(parsedYield) || parsedYield <= 0) {
     return NextResponse.json({ error: "Controlla aliquota IVA e porzioni prodotte" }, { status: 400 });
   }
+  const category = await prisma.category.findUnique({ where: { id: categoryId }, select: { id: true } });
+  if (!category) return NextResponse.json({ error: "Categoria non trovata nel ristorante selezionato" }, { status: 404 });
 
   const dish = await prisma.dish.create({
     data: { name: name.trim(), price: parsedPrice, vatRate: parsedVatRate, yieldPortions: parsedYield, preparation, description, categoryId },

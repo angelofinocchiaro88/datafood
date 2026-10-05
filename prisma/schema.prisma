@@ -18,6 +18,12 @@ model Client {
   email       String?
   notes       String?
   isActive    Boolean  @default(true)
+  serviceMode String   @default("self_service") // self_service, managed, hybrid
+  licenseStatus String @default("trial") // trial, active, past_due, suspended, expired
+  licensePlan String?
+  licenseStartsAt DateTime @default(now())
+  licenseEndsAt DateTime?
+  managedServiceEnabled Boolean @default(false)
   createdAt   DateTime @default(now())
   dishes      Dish[]
   categories  Category[]
@@ -44,6 +50,83 @@ model Client {
   bustePaga     BustaPaga[]
   emailConfigs  EmailConfig[]
   emailLogs     EmailLog[]
+  memberships   ClientMembership[]
+  invitations   UserInvitation[]
+  auditLogs     ClientAuditLog[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  platformRole String   @default("restaurant_user") // restaurant_user, datafood_admin
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  memberships  ClientMembership[]
+  sessions     UserSession[]
+  invitations  UserInvitation[] @relation("InvitationCreator")
+  auditLogs    ClientAuditLog[]
+  membershipGrants ClientMembership[] @relation("MembershipGrantor")
+}
+
+model ClientMembership {
+  id              String   @id @default(cuid())
+  userId          String
+  clientId        String
+  role            String   @default("owner") // owner, manager, accountant, staff, datafood_operator
+  managedAccess   Boolean  @default(false)
+  grantedByUserId String?
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  grantedBy       User?    @relation("MembershipGrantor", fields: [grantedByUserId], references: [id])
+  @@unique([userId, clientId])
+  @@index([clientId, role])
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model UserInvitation {
+  id              String   @id @default(cuid())
+  email           String
+  clientId        String
+  role            String
+  managedAccess   Boolean  @default(false)
+  tokenHash       String   @unique
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy       User     @relation("InvitationCreator", fields: [createdByUserId], references: [id])
+  @@index([clientId, email, acceptedAt])
+}
+
+model ClientAuditLog {
+  id          String   @id @default(cuid())
+  clientId    String
+  actorUserId String?
+  action      String
+  entity      String
+  entityId    String?
+  source      String   @default("application") // restaurant_user, datafood_operator, import, integration
+  detailsJson String?
+  createdAt   DateTime @default(now())
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([clientId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model Category {
@@ -91,6 +174,7 @@ model Ingredient {
 
 model Recipe {
   id           String     @id @default(cuid())
+  clientId     String     @default("default")
   quantity     Float
   unit         String?
   wastePct     Float      @default(0)
@@ -120,9 +204,11 @@ model Order {
   date       DateTime    @default(now())
   status     String      @default("DRAFT")
   total      Float       @default(0)
+  clientId   String      @default("default")
   supplierId String
   supplier   Supplier    @relation(fields: [supplierId], references: [id])
   items      OrderItem[]
+  invoice    Invoice?
 }
 
 model OrderItem {
@@ -130,6 +216,7 @@ model OrderItem {
   quantity     Float
   unitPrice    Float
   received     Float      @default(0)
+  clientId     String     @default("default")
   orderId      String
   order        Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
   ingredientId String
@@ -140,6 +227,7 @@ model Movement {
   id           String     @id @default(cuid())
   type         String
   quantity     Float
+  clientId     String     @default("default")
   date         DateTime   @default(now())
   reference    String?
   ingredientId String
@@ -178,6 +266,7 @@ model SaleItem {
   totalPrice  Float
   vatRate     Float   @default(10)
   vatRateKnown Boolean @default(true)
+  clientId   String  @default("default")
   dishId      String?
   dish        Dish?   @relation(fields: [dishId], references: [id])
   saleId      String
@@ -224,6 +313,10 @@ model Invoice {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   sdiConfigId   String?
+  orderId       String?     @unique
+  order         Order?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  paymentStatus String      @default("open") // open, paid, cancelled
+  paidAt        DateTime?
 }
 
 model InvoiceItem {
@@ -233,6 +326,7 @@ model InvoiceItem {
   unitPrice    Float
   totalPrice   Float
   vatRate      Float     @default(10)
+  clientId     String    @default("default")
   invoiceId    String
   invoice      Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   ingredientId String?
@@ -246,6 +340,7 @@ model PosConfig {
   apiEndpoint String?
   apiKey      String?
   isActive    Boolean   @default(true)
+  lastSync    DateTime?
 clientId    String   @default("default")
   client      Client?  @relation(fields: [clientId], references: [id])
   createdAt   DateTime @default(now())
@@ -311,6 +406,7 @@ model ChatMessage {
   sessionId  String
   session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   role       String
+  clientId   String      @default("default")
   content    String
   actionType String?
   actionData String?
@@ -330,7 +426,7 @@ model UserMemory {
 
 model FiscalYear {
   id           String          @id @default(cuid())
-  year         Int             @unique
+  year         Int
   startDate    DateTime
   endDate      DateTime
   isActive     Boolean         @default(true)
@@ -340,6 +436,7 @@ model FiscalYear {
   clientId     String          @default("default")
   client       Client?         @relation(fields: [clientId], references: [id])
   YearlySummary YearlySummary[]
+  @@unique([year, clientId])
 }
 
 model YearlySummary {
@@ -347,6 +444,7 @@ model YearlySummary {
   fiscalYearId     String
   fiscalYear       FiscalYear @relation(fields: [fiscalYearId], references: [id])
   month            Int
+  clientId         String     @default("default")
   year             Int
   revenue          Float      @default(0)
   foodCost         Float      @default(0)
@@ -468,6 +566,7 @@ model FatturaEmessa {
   id           String   @id @default(cuid())
   numero       String
   data         DateTime @default(now())
+  scadenza     DateTime?
   cliente      String
   partitaIva   String?
   importo      Float    @default(0)
@@ -475,6 +574,8 @@ model FatturaEmessa {
   tipologia    String   @default("catering")
   descrizione  String?
   stato        String   @default("EMESSA")
+  paymentStatus String  @default("open") // open, paid, cancelled
+  paidAt       DateTime?
   clientId     String   @default("default")
   client       Client?  @relation(fields: [clientId], references: [id])
   createdAt    DateTime @default(now())
@@ -578,12 +679,15 @@ model PaymentSchedule {
   nextDueDate DateTime
   probability Int      @default(100) // % probabilità (per forecast)
   linkedTransactionId String?
+  sourceType  String? // supplier_invoice, issued_invoice, manual
+  sourceId    String?
   notes       String?
   status      String   @default("open") // open, paid, cancelled
   clientId    String   @default("default")
   client      Client?  @relation(fields: [clientId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  @@unique([clientId, sourceType, sourceId])
 }
 
 model Alert {

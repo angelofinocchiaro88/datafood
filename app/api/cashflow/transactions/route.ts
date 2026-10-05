@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { categorizeTransaction } from "@/lib/cashflow";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
   const accountId = request.nextUrl.searchParams.get("accountId");
@@ -75,6 +76,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const accessResult = await requireClientAccess(request, true);
+  if ("response" in accessResult) return accessResult.response;
+  const { access } = accessResult;
   const { accountId, date, amount, description, counterparty, categoryId, source } = await request.json();
   const numericAmount = Number(amount);
   const transactionDate = date ? new Date(date) : new Date();
@@ -83,6 +87,10 @@ export async function POST(request: NextRequest) {
   }
   const account = await prisma.account.findUnique({ where: { id: accountId }, select: { id: true, clientId: true } });
   if (!account) return NextResponse.json({ error: "Conto non trovato" }, { status: 404 });
+  if (categoryId) {
+    const category = await prisma.cashFlowCategory.findUnique({ where: { id: categoryId }, select: { id: true } });
+    if (!category) return NextResponse.json({ error: "Categoria non trovata nel ristorante selezionato" }, { status: 400 });
+  }
 
   let finalCategoryId = categoryId;
   let confidence = 0;
@@ -98,6 +106,7 @@ export async function POST(request: NextRequest) {
     data: { accountId, clientId: account.clientId, date: transactionDate, amount: numericAmount, description: description || "", counterparty: counterparty || "", categoryId: finalCategoryId, source: source || "manual", isReconciled: source === "bank_upload" },
     include: { category: true },
   });
+  await recordClientAudit(access, "cash_transaction_recorded", "CashTransaction", tx.id, { amount: tx.amount, source: tx.source, date: tx.date });
 
   return NextResponse.json({ transaction: tx, suggestionConfidence: confidence });
 }

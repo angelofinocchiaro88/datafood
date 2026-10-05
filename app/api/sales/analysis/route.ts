@@ -205,7 +205,7 @@ export async function GET(request: NextRequest) {
   const requestedCategory = params.get("categoryId") || "all";
   const requestedGranularity = params.get("granularity") || (range.days <= 45 ? "day" : range.days <= 120 ? "week" : "month");
   const granularity = ["day", "week", "month"].includes(requestedGranularity) ? requestedGranularity : "day";
-  const clientId = params.get("clientId") || "default";
+  const clientId = request.headers.get("x-df-client-id") || params.get("clientId") || "default";
   const [dishes, sales, previousSales] = await Promise.all([
     prisma.dish.findMany({ where: { clientId }, select: { id: true, name: true, categoryId: true, category: { select: { name: true } } }, orderBy: [{ category: { name: "asc" } }, { name: "asc" }] }),
     prisma.sale.findMany({ where: { clientId, type: { not: "POS" }, date: { gte: range.start, lt: range.end } }, include: { items: { include: { dish: { include: { category: true } } } } }, orderBy: { date: "desc" } }),

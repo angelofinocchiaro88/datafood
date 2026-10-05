@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { CassaInCloudClient, parseDateParam } from "@/lib/cassa";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 function normalized(value: string) {
   return value.trim().toLocaleLowerCase("it-IT").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -8,7 +9,11 @@ function normalized(value: string) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { apiKey, salesPointIds, dateFrom, dateTo, clientId = "default" } = await request.json();
+    const accessResult = await requireClientAccess(request, true);
+    if ("response" in accessResult) return accessResult.response;
+    const { access } = accessResult;
+    const { apiKey, salesPointIds, dateFrom, dateTo } = await request.json();
+    const clientId = access.client.id;
     if (!apiKey) return NextResponse.json({ error: "API key required" }, { status: 400 });
 
     const client = new CassaInCloudClient({ apiKey });
@@ -52,6 +57,7 @@ export async function POST(request: NextRequest) {
             vatRate: vatKnown ? explicitVat >= 0 ? explicitVat : dish!.vatRate : 10,
             vatRateKnown: vatKnown,
             dishId: dish?.id || null,
+            clientId,
           };
         });
         const date = new Date(receipt.datetime);
@@ -90,6 +96,7 @@ export async function POST(request: NextRequest) {
       create: { id: `cassa_in_cloud_${clientId}`, name: "Cassa in Cloud", type: "cassa_in_cloud", apiKey, isActive: true, lastSync: new Date() },
       update: { apiKey, lastSync: new Date() },
     });
+    await recordClientAudit(access, "pos_sync", "Sale", undefined, { source: "cassa_in_cloud", receipts: importedReceipts, matchedItems, unlinkedItems }, "integration");
 
     return NextResponse.json({
       success: true,

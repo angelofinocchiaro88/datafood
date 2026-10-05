@@ -341,6 +341,7 @@ function calculatePriceChanges(invoices: any[], previousRange: DateRange, curren
 }
 
 export async function GET(request: NextRequest) {
+  const clientId = request.headers.get("x-df-client-id") || "default";
   const requestedPeriod = request.nextUrl.searchParams.get("period") || "anno";
   const range = getRange(requestedPeriod, new Date(), request.nextUrl.searchParams.get("from"), request.nextUrl.searchParams.get("to"));
   if (!range) return NextResponse.json({ error: "Periodo non valido" }, { status: 400 });
@@ -368,7 +369,7 @@ export async function GET(request: NextRequest) {
     prisma.cashTransaction.findMany({ where: { clientId: "default" }, select: { accountId: true, date: true, amount: true } }),
     prisma.account.findMany({ where: { clientId: "default", status: "active" }, select: { id: true, openingBalance: true, openingBalanceDate: true, openingBalanceConfirmed: true } }),
     prisma.budgetTarget.findMany({ where: { clientId: "default", year: { gte: startYear, lte: endYear } } }),
-    prisma.client.findFirst({ where: { id: "default" } }),
+    prisma.client.findFirst({ where: { id: clientId } }),
   ]);
 
   const sales = sumSales(currentSales);

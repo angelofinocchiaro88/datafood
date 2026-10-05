@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
   const days = parseInt(request.nextUrl.searchParams.get("days") || "90");
@@ -21,6 +22,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const accessResult = await requireClientAccess(request, true);
+  if ("response" in accessResult) return accessResult.response;
+  const { access } = accessResult;
   const data = await request.json();
   const accountId = data.accountId;
   const amount = Number(data.amount);
@@ -32,9 +36,14 @@ export async function POST(request: NextRequest) {
   }
   const account = await prisma.account.findUnique({ where: { id: accountId }, select: { id: true, clientId: true } });
   if (!account) return NextResponse.json({ error: "Conto non trovato" }, { status: 404 });
+  if (data.categoryId) {
+    const category = await prisma.cashFlowCategory.findUnique({ where: { id: data.categoryId }, select: { id: true } });
+    if (!category) return NextResponse.json({ error: "Categoria non trovata nel ristorante selezionato" }, { status: 400 });
+  }
   const schedule = await prisma.paymentSchedule.create({
     data: { ...data, accountId: account.id, recurrence, probability, amount, dueDate, nextDueDate: dueDate, description: data.description.trim(), clientId: account.clientId },
     include: { category: true },
   });
+  await recordClientAudit(access, "cash_schedule_created", "PaymentSchedule", schedule.id, { type: schedule.type, amount: schedule.amount, dueDate: schedule.dueDate });
   return NextResponse.json(schedule);
 }

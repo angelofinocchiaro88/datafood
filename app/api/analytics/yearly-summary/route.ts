@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     const otherCosts = control.pnl.operatingInvoices + control.pnl.externalPersonnelInvoices;
     const margin = control.kpi.ebitdaEstimate ?? 0;
     const fiscalYear = await prisma.fiscalYear.upsert({
-      where: { year },
+      where: { year_clientId: { year, clientId: control.clientId || request.headers.get("x-df-client-id") || "default" } },
       create: { year, startDate: new Date(year, 0, 1), endDate: new Date(year, 11, 31), isActive: true },
       update: {},
     });
@@ -57,7 +57,8 @@ export async function GET(request: NextRequest) {
   try {
     const year = Number.parseInt(request.nextUrl.searchParams.get("year") ?? String(new Date().getFullYear()), 10);
     if (!Number.isInteger(year) || year < 2000 || year > 2200) return NextResponse.json({ error: "Anno non valido" }, { status: 400 });
-    const fiscalYear = await prisma.fiscalYear.findUnique({ where: { year }, include: { YearlySummary: { orderBy: { month: "asc" } } } });
+    const clientId = request.headers.get("x-df-client-id") || "default";
+    const fiscalYear = await prisma.fiscalYear.findUnique({ where: { year_clientId: { year, clientId } }, include: { YearlySummary: { orderBy: { month: "asc" } } } });
     if (!fiscalYear) return NextResponse.json({ year, YearlySummary: [] });
     return NextResponse.json({ ...fiscalYear, YearlySummary: fiscalYear.YearlySummary });
   } catch {

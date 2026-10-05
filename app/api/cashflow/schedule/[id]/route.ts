@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { nextRecurrenceDate } from "@/lib/cashflow";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  const accessResult = await requireClientAccess(request, true);
+  if ("response" in accessResult) return accessResult.response;
+  const { access } = accessResult;
   const data = await request.json();
   if (data.action === "assign") {
     const account = await prisma.account.findUnique({ where: { id: data.accountId }, select: { id: true, clientId: true } });
     if (!account) return NextResponse.json({ error: "Conto non trovato" }, { status: 404 });
     const schedule = await prisma.paymentSchedule.update({ where: { id: params.id }, data: { accountId: account.id, clientId: account.clientId }, include: { account: true, category: true } });
+    await recordClientAudit(access, "cash_schedule_assigned", "PaymentSchedule", schedule.id, { accountId: account.id });
     return NextResponse.json({ schedule });
   }
   if (data.action === "settle") {
@@ -48,12 +53,18 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
         if (schedule.recurrence === "none") {
           await tx.paymentSchedule.update({ where: { id: schedule.id }, data: { accountId: account.id, status: "paid", linkedTransactionId: transaction.id } });
+          if (schedule.sourceType === "supplier_invoice" && schedule.sourceId) {
+            await tx.invoice.updateMany({ where: { id: schedule.sourceId, clientId: account.clientId }, data: { paymentStatus: "paid", paidAt: transactionDate } });
+          } else if (schedule.sourceType === "issued_invoice" && schedule.sourceId) {
+            await tx.fatturaEmessa.updateMany({ where: { id: schedule.sourceId, clientId: account.clientId }, data: { paymentStatus: "paid", paidAt: transactionDate } });
+          }
         } else {
           const nextDate = nextRecurrenceDate(schedule.nextDueDate, schedule.recurrence);
           await tx.paymentSchedule.update({ where: { id: schedule.id }, data: { accountId: account.id, status: "open", dueDate: nextDate, nextDueDate: nextDate, linkedTransactionId: transaction.id } });
         }
         return { transaction, recurrence: schedule.recurrence };
       });
+      await recordClientAudit(access, "cash_schedule_settled", "PaymentSchedule", params.id, { accountId: result.transaction.accountId, transactionId: result.transaction.id, actualDate: transactionDate });
       return NextResponse.json({ success: true, transaction: result.transaction, message: result.recurrence === "none" ? "Movimento registrato e scadenza chiusa" : "Movimento registrato; prossima ricorrenza aggiornata" });
     } catch (error) {
       const code = error instanceof Error ? error.message : "ERRORE";
@@ -72,10 +83,15 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (data.dueDate) data.dueDate = new Date(data.dueDate);
   if (data.nextDueDate) data.nextDueDate = new Date(data.nextDueDate);
   const schedule = await prisma.paymentSchedule.update({ where: { id: params.id }, data });
+  await recordClientAudit(access, "cash_schedule_updated", "PaymentSchedule", schedule.id);
   return NextResponse.json(schedule);
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  const accessResult = await requireClientAccess(request, true);
+  if ("response" in accessResult) return accessResult.response;
+  const { access } = accessResult;
   await prisma.paymentSchedule.delete({ where: { id: params.id } });
+  await recordClientAudit(access, "cash_schedule_deleted", "PaymentSchedule", params.id);
   return NextResponse.json({ success: true });
 }

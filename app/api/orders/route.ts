@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
   const include = request.nextUrl.searchParams.get("include") || "";
@@ -14,8 +15,18 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const accessResult = await requireClientAccess(request, true);
+  if ("response" in accessResult) return accessResult.response;
+  const { access } = accessResult;
   const { supplierId, items } = await request.json();
-  const total = (items as any[]).reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+  if (!supplierId || !Array.isArray(items) || items.length === 0) return NextResponse.json({ error: "Fornitore e righe ordine sono obbligatori" }, { status: 400 });
+  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true } });
+  if (!supplier) return NextResponse.json({ error: "Fornitore non trovato nel ristorante selezionato" }, { status: 404 });
+  const normalizedItems = items.map((item: any) => ({ ingredientId: String(item.ingredientId || ""), quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) }));
+  if (normalizedItems.some(item => !item.ingredientId || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) return NextResponse.json({ error: "Una o più righe ordine non sono valide" }, { status: 400 });
+  const ingredients = await prisma.ingredient.findMany({ where: { id: { in: Array.from(new Set(normalizedItems.map(item => item.ingredientId))) } }, select: { id: true } });
+  if (ingredients.length !== new Set(normalizedItems.map(item => item.ingredientId)).size) return NextResponse.json({ error: "Una o più materie prime non appartengono al ristorante selezionato" }, { status: 400 });
+  const total = normalizedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
   const order = await prisma.order.create({
     data: {
@@ -23,21 +34,26 @@ export async function POST(request: NextRequest) {
       total,
       status: "DRAFT",
       items: {
-        create: items.map((i: any) => ({
-          ingredientId: i.ingredientId,
-          quantity: i.quantity,
-          unitPrice: i.unitPrice,
+        create: normalizedItems.map(item => ({
+          ingredientId: item.ingredientId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
           received: 0,
+          clientId: access.client.id,
         })),
       },
     },
     include: { supplier: true, items: { include: { ingredient: true } } },
   });
+  await recordClientAudit(access, "supplier_order_created", "Order", order.id, { total, items: normalizedItems.length });
 
   return NextResponse.json(order);
 }
 
 export async function PUT(request: NextRequest) {
+  const accessResult = await requireClientAccess(request, true);
+  if ("response" in accessResult) return accessResult.response;
+  const { access } = accessResult;
   const body = await request.json();
   const { id, status, action } = body;
   if (!id) return NextResponse.json({ error: "ID ordine obbligatorio" }, { status: 400 });
@@ -120,6 +136,7 @@ export async function PUT(request: NextRequest) {
       });
 
       if (result.alreadyReceived) return NextResponse.json({ success: true, status: result.status, message: "Ordine già ricevuto; nessun movimento duplicato creato" });
+      await recordClientAudit(access, result.status === "RECEIVED" ? "order_received" : "order_partially_received", "Order", id, { status: result.status });
       return NextResponse.json({
         success: true,
         status: result.status,
@@ -144,5 +161,6 @@ export async function PUT(request: NextRequest) {
 
   if (status !== "SENT") return NextResponse.json({ error: "Stato ordine non valido" }, { status: 400 });
   const order = await prisma.order.update({ where: { id }, data: { status } });
+  await recordClientAudit(access, "supplier_order_sent", "Order", id, { status });
   return NextResponse.json(order);
 }

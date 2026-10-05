@@ -92,12 +92,13 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
-  const isHomePage = pathname === "/";
+  const isHomePage = pathname === "/" || pathname === "/login" || pathname.startsWith("/invite/");
   if (isHomePage) return null;
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
     localStorage.removeItem("df_clientId");
-    router.push("/");
+    router.push("/login");
   };
 
   return (

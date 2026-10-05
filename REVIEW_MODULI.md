@@ -2,6 +2,16 @@
 
 Revisione del codice e dei flussi dati eseguita il 2 ottobre 2026. La mappa distingue le connessioni effettive dalle lacune osservate; “collegato” indica un flusso implementato nel codice, non una certificazione contabile o fiscale.
 
+## Modello operativo ibrido
+
+- Ogni ristorante è un tenant `Client` con modalità `self_service`, `managed` o `hybrid`, stato/piano/scadenza licenza e flag per incarico DATAFOOD.
+- L’accesso è basato su utenti email/password e membership per ristorante con ruoli `owner`, `manager`, `accountant`, `staff` e `datafood_operator`.
+- L’operatore DATAFOOD può scrivere nei dati del ristorante solo se la modalità è managed/ibrida e l’incarico è attivo. L’attore e la provenienza sono conservati in `ClientAuditLog`.
+- Licenza e servizio gestito si attivano manualmente dall’amministratore; Stripe non è collegato in questa fase.
+- Il tenant selezionato è impostato in cookie HttpOnly e verificato rispetto alle membership. Il livello Prisma applica il filtro tenant ai modelli con `clientId` e alle relazioni principali.
+- Il primo amministratore viene creato una sola volta dalla pagina `/login` usando `DATAFOOD_BOOTSTRAP_TOKEN`; dopo la creazione va rimosso tale token dalle variabili Vercel.
+- Tutte le richieste API e pagine passano ora dal middleware di sessione; il selettore imposta un cookie HttpOnly verificato contro le membership e Prisma aggiunge il filtro tenant anche alle query per ID e alle relazioni principali.
+
 ## 1. Vendite e Revenue Management
 
 ### Flusso verificato
@@ -47,27 +57,28 @@ Revisione del codice e dei flussi dati eseguita il 2 ottobre 2026. La mappa dist
 | Report | Riepiloga Controllo di Gestione e copertura delle fonti | Collegato tramite `/api/cost-control`. |
 | Budget | Obiettivi mensili + actual di Controllo di Gestione | Collegato tramite `/api/budget-targets` e `/api/cost-control`. |
 | Bilancio | Conto Economico gestionale da Controllo di Gestione + saldi patrimoniali disponibili | Collegato ai dati operativi; liquidità condivisa con i saldi iniziali e movimenti Cash Flow. Debiti, imposte e patrimonio netto restano N/D finché non riconciliati. |
-| Ordini | Ordine fornitore → ricezione parziale/totale → stock ingrediente + `Movement` | Ricezione aggiorna lo stock in transazione. La fattura reale va registrata in Accounting: la ricezione non crea più una fattura sintetica con IVA presunta. Manca ancora la relazione ordine↔fattura per la riconciliazione. |
-| Accounting (fatture ricevute) | XML/documento → `Invoice` → approvazione/classificazione → Controllo di Gestione | Collegato per i costi classificati; la riconciliazione ordine–fattura e il pagamento–Cash Flow non sono automatizzati. |
-| Fatture emesse | `FatturaEmessa` → ricavi B2B nel Controllo di Gestione/Bilancio | Ricavo collegato; incasso e credito cliente non sono riconciliati con i movimenti bancari Cash Flow. |
+| Ordini | Ordine fornitore → ricezione parziale/totale → stock ingrediente + `Movement` → fattura reale collegabile | Ricezione aggiorna lo stock in transazione. Accounting può collegare una fattura approvata a un ordine ricevuto dello stesso fornitore; niente fattura sintetica o IVA presunta. |
+| Accounting (fatture ricevute) | XML/documento → `Invoice` → approvazione/classificazione → ordine ricevuto opzionale → scadenza Cash Flow | Scadenza creata su data/importo documento verificati; pagamento dal Cash Flow aggiorna lo stato fattura. L’ordine ricevuto è collegabile durante la classificazione. |
+| Fatture emesse | `FatturaEmessa` + scadenza → ricavo B2B + incasso programmato Cash Flow | La scadenza genera un evento idempotente e il saldo aggiorna lo stato pagamento. Se la data non è presente, il modulo non inventa una scadenza. |
 | Magazzino | `Ingredient.currentStock` + `Movement`; ricezione ordini aggiorna entrambi | Collegato alle ricette via ingrediente e ai costi via unit price; vendite POS non scaricano automaticamente le quantità teoriche. |
 | Personale | Dipendenti/contratti/buste paga → costo personale in Controllo di Gestione | Collegato; i periodi senza busta possono essere stimati e sono marcati. |
 | Ammortamenti | Cespiti → quote ammortamento → Controllo di Gestione/Bilancio | Collegato ai calcoli economici e patrimoniali; non è un flusso di cassa. |
-| Cash Flow | Conti, saldi iniziali, movimenti importati/manuali e scadenze → forecast | Il saldo attuale è ora calcolato con la stessa regola in Cash Flow, Dashboard, Controllo di Gestione e Bilancio. Sottosistema ancora manuale: vendite e fatture non generano automaticamente incassi/pagamenti o scadenze. |
-| Clienti / selettore | `localStorage.df_clientId` seleziona un cliente nell’interfaccia | **Lacuna trasversale critica:** numerose API e pagine server-side continuano a filtrare `clientId: "default"` oppure non filtrano affatto. Le nuove viste Vendite/Revenue e Corrispettivi propagano il cliente attivo; non è ancora uniforme in tutto il prodotto. |
+| Cash Flow | Conti, saldi iniziali, movimenti importati/manuali, fatture con scadenza → forecast | Il saldo è coerente tra moduli; fatture ricevute/emesse creano scadenze collegate quando hanno una data affidabile. Corrispettivi POS restano da abbinare a movimenti effettivi, perché i tempi di accredito dipendono dal metodo e dal contratto POS. |
+| Clienti / accesso | User + membership + licenza + cookie HttpOnly + filtro Prisma per tenant | Fondazione e UI d’invito implementate; serve bootstrap del primo amministratore, smoke test con due tenant e verifica dei permessi per ruoli prima dell’onboarding. |
 
 ## 3. Lacune trasversali prioritarie rimaste
 
-1. **Contesto cliente (P0):** il selettore non è una sessione/contesto server condiviso. Verificato hard-coded `default` in API di Controllo di Gestione, Budget, Bilancio, Menu Engineering, Cash Flow e Revenue Management precedente; altre API leggono dati senza filtro cliente. Va risolto con un contesto client server-side e applicato a tutte le letture, scritture e operazioni per ID.
-2. **Riconciliazione finanziaria (P1):** Cash Flow non crea automaticamente scadenze da fatture emesse/ricevute e corrispettivi. Occorrono date/condizioni di pagamento e un collegamento univoco tra documento, scadenza e movimento bancario.
-3. **Ordine–fattura (P1):** la fattura sintetica e l’aliquota presunta sono state rimosse dalla ricezione; schema e API non conservano ancora una relazione ordine↔fattura che consenta riconciliazione affidabile con il documento reale.
-4. **POS–magazzino (P1):** le vendite non generano scarichi ingredienti derivati dalle ricette; il costo esposto è teorico e non la variazione reale di giacenza.
-5. **Audit e test automatici (P1):** il repository non definisce script di test nel `package.json`; l’integrazione è verificata principalmente via build e controlli manuali. Servono test di dominio per IVA/netto, deduplica import, ricezione ordini, tenant e riconciliazione.
-6. **API legacy/orfane:** le viste P&L e riepilogo annuale usano ora la fonte Controllo di Gestione invece di percentuali fisse; alcune API di analisi non risultano comunque richiamate dalle pagine correnti e andranno consolidate o rimosse dopo aver verificato eventuali integrazioni esterne.
+1. **Copertura tenant (P0):** il contesto server e il filtro Prisma sono implementati anche per relazioni senza `clientId`; restano da testare con due tenant e percorsi API per ID, inclusi i casi di ruolo revocato e licenza sospesa.
+2. **POS–Cash Flow (P1):** le fatture con scadenza sono collegate. Gli incassi POS vanno abbinati a movimenti bancari reali: non si deduce una data di accredito senza configurazione del gestore POS.
+3. **POS–magazzino (P1):** il costo resta teorico; lo scarico reale richiede mapping affidabile prodotti→piatti, unità/resa/scarto e deduplica per scontrino prima di aggiornare le giacenze.
+4. **Test automatici (P1):** presenti test unitari per le regole di filtro tenant. Servono test end-to-end con due tenant e test per ruoli, licenza, import deduplicato, pagamento fatture, ordini e stock.
+5. **Bootstrap e gestione inviti:** manca l’invio email automatico; l’amministratore condivide il link temporaneo prodotto dal pannello. Rimuovere `DATAFOOD_BOOTSTRAP_TOKEN` dopo la creazione del primo amministratore.
+6. **API legacy/orfane:** le viste P&L e riepilogo annuale usano ora la fonte Controllo di Gestione; alcune API non risultano comunque richiamate dalle pagine correnti e andranno consolidate o rimosse dopo aver verificato eventuali integrazioni esterne.
+7. **Webhook SDI:** il middleware richiede sessione anche per `/api/sdi/webhook`. Prima di collegare un provider esterno va implementata una firma webhook per tenant; la firma ricevuta dal codice precedente non veniva verificata.
 
 ## 4. Verifiche richieste prima della pubblicazione
 
-- `npx prisma validate` e `npx prisma db push` per i due campi di qualità fiscale aggiunti allo schema.
-- `npm run build` per compilazione e controllo TypeScript dell’intero progetto.
-- Smoke test in produzione degli endpoint Vendite e test UI senza creare corrispettivi finanziari fittizi.
-- Verifica operativa con un cliente non `default` prima di considerare risolto il problema di selezione cliente a livello applicativo.
+- `npx prisma validate`, `npx prisma db push`, `npm test` e `npm run build`.
+- Configurare il primo amministratore da `/login` con il token bootstrap una tantum; rimuovere poi `DATAFOOD_BOOTSTRAP_TOKEN` da Vercel.
+- Smoke test autenticato con due ristoranti: account/membership, query tenant, invito/accettazione, servizio gestito, scadenza fattura e saldo in Cash Flow.
+- Verificare il webhook SDI con la firma/provider prima di riattivare l’integrazione esterna.

@@ -17,7 +17,7 @@ export default function FattureEmessePage() {
   const [dragOver, setDragOver] = useState(false);
   const [uploadResult, setUploadResult] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [form, setForm] = useState({ numero: "", data: new Date().toISOString().split("T")[0], cliente: "", partitaIva: "", importo: "", iva: "0", tipologia: "catering", descrizione: "" });
+  const [form, setForm] = useState({ numero: "", data: new Date().toISOString().split("T")[0], scadenza: "", cliente: "", partitaIva: "", importo: "", iva: "0", tipologia: "catering", descrizione: "" });
 
   useEffect(() => { load(); }, []);
 
@@ -33,13 +33,15 @@ export default function FattureEmessePage() {
 
   const handleSave = async () => {
     if (!form.numero || !form.cliente || !form.importo) { setMsg("Numero, cliente e importo obbligatori"); return; }
-    await fetch("/api/fatture-emesse", {
+    const response = await fetch("/api/fatture-emesse", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...form, importo: parseFloat(form.importo), iva: parseFloat(form.iva) }),
     });
+    const result = await response.json();
+    if (!response.ok) { setMsg(result.error || "Fattura non registrata"); return; }
     setShowForm(false);
-    setForm({ numero: "", data: new Date().toISOString().split("T")[0], cliente: "", partitaIva: "", importo: "", iva: "0", tipologia: "catering", descrizione: "" });
-    setMsg("✅ Fattura emessa registrata");
+    setForm({ numero: "", data: new Date().toISOString().split("T")[0], scadenza: "", cliente: "", partitaIva: "", importo: "", iva: "0", tipologia: "catering", descrizione: "" });
+    setMsg(form.scadenza ? "Fattura registrata e incasso programmato nel Cash Flow." : "Fattura registrata. Aggiungi la scadenza per collegarla al Cash Flow.");
     load();
   };
 
@@ -167,6 +169,7 @@ export default function FattureEmessePage() {
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-xs text-gray-500 mb-1 block">Numero Fattura *</label><input value={form.numero} onChange={e => setForm({...form, numero: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="FT-2026-001" /></div>
             <div><label className="text-xs text-gray-500 mb-1 block">Data</label><input type="date" value={form.data} onChange={e => setForm({...form, data: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Scadenza pagamento</label><input type="date" value={form.scadenza} onChange={e => setForm({...form, scadenza: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" /></div>
             <div className="col-span-2"><label className="text-xs text-gray-500 mb-1 block">Cliente *</label><input value={form.cliente} onChange={e => setForm({...form, cliente: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="Es. Azienda Rossi S.p.A." /></div>
             <div><label className="text-xs text-gray-500 mb-1 block">Partita IVA Cliente</label><input value={form.partitaIva} onChange={e => setForm({...form, partitaIva: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="IT01234567890" /></div>
             <div><label className="text-xs text-gray-500 mb-1 block">Tipologia</label><select value={form.tipologia} onChange={e => setForm({...form, tipologia: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">{TIPOLOGIE.map(t => <option key={t} value={t}>{t}</option>)}</select></div>

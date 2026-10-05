@@ -175,6 +175,7 @@ export async function GET(request: NextRequest) {
   const supportedPeriods: Period[] = ["oggi", "settimana", "mese", "trimestre", "anno"];
   const period: Period = supportedPeriods.includes(requestedPeriod as Period) ? requestedPeriod as Period : "trimestre";
   const range = getPeriodRange(period);
+  const clientId = request.headers.get("x-df-client-id") || "default";
   const previousRange = getPreviousRange(period, range);
   const salesInclude = { items: { include: { dish: { include: { category: true, recipes: { include: { ingredient: true } } } } } } };
 
@@ -187,7 +188,7 @@ export async function GET(request: NextRequest) {
       where: { clientId: "default", type: { not: "POS" }, date: { gte: previousRange.start, lt: previousRange.end } },
       include: salesInclude,
     }),
-    prisma.client.findFirst({ where: { id: "default" } }),
+    prisma.client.findFirst({ where: { id: clientId } }),
     prisma.paymentSchedule.findMany({ where: { status: "open" }, orderBy: { dueDate: "asc" }, take: 6, include: { category: true } }),
     prisma.alert.findMany({ where: { isResolved: false }, orderBy: { createdAt: "desc" } }),
     prisma.cashFlowCategory.findMany(),

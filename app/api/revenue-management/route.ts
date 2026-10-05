@@ -265,7 +265,7 @@ export async function GET(request: NextRequest) {
   if (!range) return NextResponse.json({ error: "Periodo non valido" }, { status: 400 });
   const previousRange = getPreviousRange(range);
   const categoryId = request.nextUrl.searchParams.get("categoryId") || "all";
-  const clientId = request.nextUrl.searchParams.get("clientId") || "default";
+  const clientId = request.headers.get("x-df-client-id") || request.nextUrl.searchParams.get("clientId") || "default";
 
   const [dishes, currentSales, previousSales] = await Promise.all([
     prisma.dish.findMany({ where: { clientId }, include: { category: true, recipes: { include: { ingredient: true } } }, orderBy: [{ category: { name: "asc" } }, { name: "asc" }] }),

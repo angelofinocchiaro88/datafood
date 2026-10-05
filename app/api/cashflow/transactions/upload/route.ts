@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseStatementCSV, parseStatementText } from "@/lib/statement-parser";
 import { categorizeTransaction } from "@/lib/cashflow";
+import { recordClientAudit, requireClientAccess } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
 // Endpoint per salvare le transazioni parsate dopo revisione
 export async function PUT(request: NextRequest) {
   try {
+    const accessResult = await requireClientAccess(request, true);
+    if ("response" in accessResult) return accessResult.response;
+    const { access } = accessResult;
     const { accountId, transactions } = await request.json();
     if (!accountId || !Array.isArray(transactions)) return NextResponse.json({ error: "Seleziona un conto e transazioni valide" }, { status: 400 });
     const account = await prisma.account.findUnique({ where: { id: accountId }, select: { id: true, clientId: true } });
@@ -96,6 +100,7 @@ export async function PUT(request: NextRequest) {
       saved++;
     }
 
+    if (saved > 0) await recordClientAudit(access, "bank_statement_imported", "CashTransaction", undefined, { accountId: account.id, saved, skipped });
     return NextResponse.json({ success: true, saved, skipped });
   } catch (error) {
     return NextResponse.json({ error: "Errore salvataggio" }, { status: 500 });
