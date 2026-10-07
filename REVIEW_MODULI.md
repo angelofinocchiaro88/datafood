@@ -9,7 +9,7 @@ Revisione del codice e dei flussi dati eseguita il 2 ottobre 2026. La mappa dist
 - L’operatore DATAFOOD può scrivere nei dati del ristorante solo se la modalità è managed/ibrida e l’incarico è attivo. L’attore e la provenienza sono conservati in `ClientAuditLog`.
 - Licenza e servizio gestito si attivano manualmente dall’amministratore; Stripe non è collegato in questa fase.
 - Il tenant selezionato è impostato in cookie HttpOnly e verificato rispetto alle membership. Il livello Prisma applica il filtro tenant ai modelli con `clientId` e alle relazioni principali.
-- Il primo amministratore viene creato una sola volta dalla pagina `/login` usando `DATAFOOD_BOOTSTRAP_TOKEN`; dopo la creazione va rimosso tale token dalle variabili Vercel.
+- Il primo amministratore DATAFOOD è stato creato il 6 ottobre 2026 tramite bootstrap una tantum; `DATAFOOD_BOOTSTRAP_TOKEN` è stato rimosso da Vercel e l’endpoint rifiuta ulteriori bootstrap.
 - Tutte le richieste API e pagine passano ora dal middleware di sessione; il selettore imposta un cookie HttpOnly verificato contro le membership e Prisma aggiunge il filtro tenant anche alle query per ID e alle relazioni principali.
 
 ## 1. Vendite e Revenue Management
@@ -64,7 +64,7 @@ Revisione del codice e dei flussi dati eseguita il 2 ottobre 2026. La mappa dist
 | Personale | Dipendenti/contratti/buste paga → costo personale in Controllo di Gestione | Collegato; i periodi senza busta possono essere stimati e sono marcati. |
 | Ammortamenti | Cespiti → quote ammortamento → Controllo di Gestione/Bilancio | Collegato ai calcoli economici e patrimoniali; non è un flusso di cassa. |
 | Cash Flow | Conti, saldi iniziali, movimenti importati/manuali, fatture con scadenza → forecast | Il saldo è coerente tra moduli; fatture ricevute/emesse creano scadenze collegate quando hanno una data affidabile. Corrispettivi POS restano da abbinare a movimenti effettivi, perché i tempi di accredito dipendono dal metodo e dal contratto POS. |
-| Clienti / accesso | User + membership + licenza + cookie HttpOnly + filtro Prisma per tenant | Fondazione e UI d’invito implementate; serve bootstrap del primo amministratore, smoke test con due tenant e verifica dei permessi per ruoli prima dell’onboarding. |
+| Clienti / accesso | User + membership + licenza + cookie HttpOnly + filtro Prisma per tenant | Fondazione, bootstrap admin e UI d’invito completati; restano smoke test con due tenant e verifica dei permessi per ruoli prima dell’onboarding. |
 
 ## 3. Lacune trasversali prioritarie rimaste
 
@@ -72,13 +72,13 @@ Revisione del codice e dei flussi dati eseguita il 2 ottobre 2026. La mappa dist
 2. **POS–Cash Flow (P1):** le fatture con scadenza sono collegate. Gli incassi POS vanno abbinati a movimenti bancari reali: non si deduce una data di accredito senza configurazione del gestore POS.
 3. **POS–magazzino (P1):** il costo resta teorico; lo scarico reale richiede mapping affidabile prodotti→piatti, unità/resa/scarto e deduplica per scontrino prima di aggiornare le giacenze.
 4. **Test automatici (P1):** presenti test unitari per le regole di filtro tenant. Servono test end-to-end con due tenant e test per ruoli, licenza, import deduplicato, pagamento fatture, ordini e stock.
-5. **Bootstrap e gestione inviti:** manca l’invio email automatico; l’amministratore condivide il link temporaneo prodotto dal pannello. Rimuovere `DATAFOOD_BOOTSTRAP_TOKEN` dopo la creazione del primo amministratore.
+5. **Bootstrap e gestione inviti:** bootstrap admin completato e `DATAFOOD_BOOTSTRAP_TOKEN` rimosso da Vercel. Manca l’invio email automatico; l’amministratore condivide il link temporaneo prodotto dal pannello.
 6. **API legacy/orfane:** le viste P&L e riepilogo annuale usano ora la fonte Controllo di Gestione; alcune API non risultano comunque richiamate dalle pagine correnti e andranno consolidate o rimosse dopo aver verificato eventuali integrazioni esterne.
 7. **Webhook SDI:** il middleware richiede sessione anche per `/api/sdi/webhook`. Prima di collegare un provider esterno va implementata una firma webhook per tenant; la firma ricevuta dal codice precedente non veniva verificata.
 
 ## 4. Verifiche richieste prima della pubblicazione
 
 - `npx prisma validate`, `npx prisma db push`, `npm test` e `npm run build`.
-- Configurare il primo amministratore da `/login` con il token bootstrap una tantum; rimuovere poi `DATAFOOD_BOOTSTRAP_TOKEN` da Vercel.
+- Primo amministratore DATAFOOD creato da `/login`; `DATAFOOD_BOOTSTRAP_TOKEN` rimosso da Vercel.
 - Smoke test autenticato con due ristoranti: account/membership, query tenant, invito/accettazione, servizio gestito, scadenza fattura e saldo in Cash Flow.
 - Verificare il webhook SDI con la firma/provider prima di riattivare l’integrazione esterna.
