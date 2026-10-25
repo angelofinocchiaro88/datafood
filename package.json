@@ -6,6 +6,7 @@
     "dev": "next dev --port 3000 --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start",
+    "seed": "node prisma/seed-demo.mjs",
     "test": "node --test tenant-scope.test.cjs"
   },
   "dependencies": {

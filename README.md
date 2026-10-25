@@ -66,7 +66,8 @@ Software professionale di **controllo di gestione per la ristorazione**. Trasfor
 ## 🚀 Installazione
 
 ### Requisiti
-- Node.js 18+
+- Node.js 18+ (consigliato: LTS 24)
+- PostgreSQL 14+ in locale (oppure un database Neon)
 - Git
 
 ### Setup
@@ -93,6 +94,47 @@ npm run dev
 ```
 
 Apri **http://localhost:3000**
+
+---
+
+## 🖥️ Avvio rapido in locale (PostgreSQL + dati demo)
+
+Il progetto usa **Prisma con provider `postgresql`**. Per una macchina locale
+senza account Neon, basta un PostgreSQL installato in locale:
+
+```bash
+# 1. Avvia il database (su Windows: .\avvia-ristogest.bat avvia anche Postgres)
+pg_ctl -D <DATADIR> -l <LOGFILE> -o "-p 5432 -h 127.0.0.1" start
+
+# 2. Crea il database e configura la connessione
+createdb -h 127.0.0.1 -U postgres datafood
+# .env:
+#   DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/datafood?schema=public"
+#   DATAFOOD_SESSION_SECRET="<stringa casuale di almeno 32 caratteri>"
+
+# 3. Schema + dati demo completi (ristorante, utente, vendite, fatture, personale, cash flow)
+npx prisma db push
+npm run seed
+
+# 4. Avvia l'app
+npm run dev
+```
+
+### Credenziali demo
+
+| Campo | Valore |
+|-------|--------|
+| Email | `admin@datafood.it` |
+| Password | `datafood2026!` |
+| Ristorante | Trattoria La Lanterna |
+
+Il seed (`prisma/seed-demo.mjs`) è **ri-eseguibile**: usa `upsert` su cliente e
+utente, quindi ricaricarlo non invalida le sessioni aperte.
+
+### Script di avvio
+
+`avvia-ristogest.bat` avvia PostgreSQL (se non è già attivo) e poi il server
+Next.js su <http://127.0.0.1:3000>.
 
 ---
 
