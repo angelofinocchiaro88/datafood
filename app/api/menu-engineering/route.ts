@@ -70,6 +70,9 @@ export async function GET(request: NextRequest) {
   const range = getRange(request);
   if (!range) return NextResponse.json({ error: "Periodo o date non validi" }, { status: 400 });
 
+  // I filtri annidati sulle relazioni non vengono riscritti dal tenant-scope:
+  // il clientId va letto dal contesto di richiesta, non fissato a "default".
+  const tenantClientId = request.headers.get("x-df-client-id") || "default";
   const requestedCategory = request.nextUrl.searchParams.get("categoryId") || "all";
   const targetFoodCost = Number(request.nextUrl.searchParams.get("targetFoodCost") || 30);
   const safeTargetFoodCost = Number.isFinite(targetFoodCost) && targetFoodCost >= 10 && targetFoodCost <= 80 ? targetFoodCost : 30;
@@ -84,7 +87,7 @@ export async function GET(request: NextRequest) {
     prisma.saleItem.findMany({
       where: {
         dishId: { not: null },
-        sale: { clientId: "default", date: { gte: range.start, lt: range.end } },
+        sale: { clientId: tenantClientId, date: { gte: range.start, lt: range.end } },
       },
       select: { dishId: true, quantity: true, totalPrice: true, vatRate: true, vatRateKnown: true },
     }),
@@ -114,7 +117,7 @@ export async function GET(request: NextRequest) {
     unlinkedSalesLines = await prisma.saleItem.count({
       where: {
         dishId: null,
-        sale: { clientId: "default", date: { gte: range.start, lt: range.end } },
+        sale: { clientId: tenantClientId, date: { gte: range.start, lt: range.end } },
       },
     });
   }
