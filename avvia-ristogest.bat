@@ -23,9 +23,15 @@ if not exist "%PG_BIN%\pg_isready.exe" (
 "%PG_BIN%\pg_isready.exe" -h 127.0.0.1 -p 5432 -t 3 >nul 2>&1
 if errorlevel 1 (
   echo     Avvio del server PostgreSQL...
+  REM PATH pulito in avvio: le DLL di PostgreSQL (libcrypto-3-x64, libintl-9,
+  REM libwinpthread-1) hanno gli stessi nomi di quelle MinGW di Git: se il PATH
+  REM le contiene, i backend caricano le versioni sbagliate e muoiono con 0xC0000142.
+  set "ORIG_PATH=%PATH%"
   pushd "%PG_BIN%"
+  set "PATH=%PG_BIN%;C:\Windows\System32;C:\Windows"
   start "" /B "%PG_BIN%\postgres.exe" -D "%PG_DATA%" -p 5432 -h 127.0.0.1 >"%PG_LOG%" 2>&1
   popd
+  set "PATH=%ORIG_PATH%"
   "%PG_BIN%\pg_isready.exe" -h 127.0.0.1 -p 5432 -t 30 >nul 2>&1
   if errorlevel 1 (
     echo     PostgreSQL non risponde. Ultimo log:
