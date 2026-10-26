@@ -136,6 +136,33 @@ utente, quindi ricaricarlo non invalida le sessioni aperte.
 `avvia-ristogest.bat` avvia PostgreSQL (se non è già attivo) e poi il server
 Next.js su <http://127.0.0.1:3000>.
 
+> **Nota — DLL e PATH**: all'avvio di PostgreSQL il launcher usa un PATH
+> sanificato. Le DLL di PostgreSQL (`libcrypto-3-x64`, `libintl-9`,
+> `libwinpthread-1`) hanno gli stessi nomi di quelle MinGW di Git: se il PATH
+> contiene la cartella `git\ucrt64\bin`, i backend caricano le versioni
+> sbagliate e muoiono con `0xC0000142` (Prisma `P1001`, HTTP 500 casuali).
+
+### Avvio in background (senza console)
+
+```powershell
+# PostgreSQL (staccato, con PATH pulito)
+$env:PATH = "$env:LOCALAPPDATA\Programs\PostgreSQL\pgsql\bin;C:\Windows\System32;C:\Windows"
+Start-Process "$env:LOCALAPPDATA\Programs\PostgreSQL\pgsql\bin\postgres.exe" `
+  -ArgumentList "-D","$env:LOCALAPPDATA\PostgreSQL\16\data","-p","5432","-h","127.0.0.1" `
+  -WorkingDirectory "$env:LOCALAPPDATA\Programs\PostgreSQL\pgsql\bin" `
+  -RedirectStandardOutput "$env:LOCALAPPDATA\datafood-logs\postgres.log" `
+  -RedirectStandardError  "$env:LOCALAPPDATA\datafood-logs\postgres.log.err"
+
+# Next.js in dev mode (staccato)
+Start-Process "$env:LOCALAPPDATA\Programs\nodejs\node.exe" `
+  -ArgumentList "node_modules\next\dist\bin\next","dev","--port","3000","--hostname","127.0.0.1" `
+  -WorkingDirectory "C:\Users\Angelo(Farco)\Documents\GitHub\datafood" `
+  -RedirectStandardOutput "$env:LOCALAPPDATA\datafood-logs\next-dev.log" `
+  -RedirectStandardError  "$env:LOCALAPPDATA\datafood-logs\next-dev.log.err"
+```
+
+Log in `%LOCALAPPDATA%\datafood-logs`. Per fermarli: `Get-Process postgres,node | Stop-Process`.
+
 ---
 
 ## 📄 Licenza
